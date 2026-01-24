@@ -1,0 +1,3 @@
+api_url: ${oc.env:COLORIZATION_API_URL,"http://api:8000"}
+token: ${oc.env:TELEGRAM_BOT_TOKEN,""}
+redis_url: ${oc.env:REDIS_URL,"redis://redis:6379/0"}

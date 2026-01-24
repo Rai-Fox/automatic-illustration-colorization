@@ -1,0 +1,8 @@
+defaults:
+  - bot: default
+
+hydra:
+  run:
+    dir: .
+  job:
+    chdir: false

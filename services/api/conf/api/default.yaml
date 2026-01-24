@@ -1,0 +1,6 @@
+host: ${oc.env:API_HOST,"0.0.0.0"}
+port: ${oc.env:API_PORT,8000}
+log_level: ${oc.env:API_LOG_LEVEL,"info"}
+model_path: ${oc.env:COLORIZATION_MODEL_PATH,"data/models/model.pt"}
+max_image_size: ${oc.env:MAX_IMAGE_SIZE,4096}
+redis_url: ${oc.env:REDIS_URL,"redis://redis:6379/0"}

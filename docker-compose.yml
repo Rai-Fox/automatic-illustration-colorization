@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+  bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    depends_on:
+      - api
+      - redis
+    env_file:
+      - .env
+    environment:
+      - COLORIZATION_API_URL=http://api:8000
+      - REDIS_URL=redis://redis:6379/0
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
