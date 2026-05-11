@@ -1,0 +1,20 @@
+enabled: false
+model_id: cobra
+repo_path: data/models/Cobra
+device: cuda
+snapshot_path: data/models/Cobra/Cobra/models--JunhaoZhuang--Cobra/snapshots/ee2fd07574c9ea8582a7045620b9901998b42bce
+pixart_model: PixArt-alpha/PixArt-XL-2-1024-MS
+pixart_local_dir: data/models/Cobra/artifacts/PixArt-alpha--PixArt-XL-2-1024-MS
+allow_download: false
+style: line + shadow
+seed: 1
+num_inference_steps: 10
+top_k: 20
+max_side: 512
+high_res_scale: 1.0
+vae_slicing: true
+vae_tiling: true
+lora_rank: 128
+supports_cpu: false
+requires_reference: true
+supports_multiple_references: true

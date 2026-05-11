@@ -1,0 +1,9 @@
+enabled: true
+model_id: deoldify
+device: cpu
+hf_repo_id: leonelhs/deoldify
+repo_path: data/models/deoldify/repo
+root_folder: data/models/deoldify/artifacts/root
+allow_download: true
+render_factor: 25
+artistic: true

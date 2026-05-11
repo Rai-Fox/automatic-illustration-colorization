@@ -1,0 +1,11 @@
+enabled: false
+model_id: ctrlcolor
+repo_path: data/models/ctrlcolor/repo
+device: ${benchmark.runtime.device}
+checkpoint_path: data/models/ctrlcolor/checkpoints/main_model.ckpt
+config_path: data/models/ctrlcolor/repo/models/cldm_v15_inpainting_infer1.yaml
+default_prompt: colorize this grayscale illustration with natural colors
+image_resolution: 512
+ddim_steps: 20
+guidance_scale: 7.0
+control_strength: 1.0

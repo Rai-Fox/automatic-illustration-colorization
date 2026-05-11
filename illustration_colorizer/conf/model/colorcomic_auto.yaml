@@ -1,0 +1,13 @@
+enabled: true
+model_id: colorcomic_auto
+repo_path: data/models/ColorComic
+device: ${benchmark.runtime.device}
+weights_dir: models/weights
+generator_path: models/weights/generator.zip
+extractor_path: models/weights/extractor.pth
+denoiser_weights_dir: models/weights/denoiser
+allow_download: false
+size: 576
+supports_cpu: true
+requires_reference: false
+supports_multiple_references: false

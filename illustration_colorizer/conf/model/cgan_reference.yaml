@@ -1,0 +1,9 @@
+enabled: false
+model_id: cgan_reference
+repo_path: data/models/Example_Based_Manga_Colorization---cGAN
+device: ${benchmark.runtime.device}
+checkpoint_path: data/models/Example_Based_Manga_Colorization---cGAN/experiments/Color2Manga_gray/074000_gray.pt
+size: 256
+supports_cpu: true
+requires_reference: true
+supports_multiple_references: false

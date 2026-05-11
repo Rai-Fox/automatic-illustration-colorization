@@ -1,0 +1,11 @@
+enabled: true
+model_id: ddcolor
+repo_path: data/models/ddcolor/repo
+device: ${benchmark.runtime.device}
+pretrained_id: piddnad/ddcolor_paper_tiny
+checkpoint_path: null
+pretrained_local_dir: data/models/ddcolor/artifacts/piddnad_ddcolor_paper_tiny
+allow_download: true
+input_size: 512
+model_size: tiny
+decoder_type: MultiScaleColorDecoder

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import cv2
 import numpy as np
 from PIL import Image
 
@@ -32,6 +31,8 @@ def to_rgb_uint8(image: np.ndarray) -> np.ndarray:
 
 
 def to_bgr_uint8(image: np.ndarray) -> np.ndarray:
+    import cv2
+
     return cv2.cvtColor(to_rgb_uint8(image), cv2.COLOR_RGB2BGR)
 
 

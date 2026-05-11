@@ -1,0 +1,15 @@
+enabled: false
+model_id: colorcomic_reference
+repo_path: data/models/ColorComic
+device: ${benchmark.runtime.device}
+weights_dir: models/weights
+allow_download: false
+size: 512
+denoise_steps: 30
+manganinja_hf_repo: Johanan0528/MangaNinja
+sd15_model_path: stable-diffusion-v1-5/stable-diffusion-v1-5
+clip_vision_path: openai/clip-vit-large-patch14
+controlnet_lineart_path: lllyasviel/control_v11p_sd15_lineart
+supports_cpu: true
+requires_reference: true
+supports_multiple_references: false

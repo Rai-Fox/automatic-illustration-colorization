@@ -1,67 +1,157 @@
 from pathlib import Path
+from typing import Any
 
-import fire
+from shared.hydra import append_override, extend_overrides, load_config
+from shared.paths import get_project_root
 
-from illustration_colorizer.data.config import data_paths_from_config
-from illustration_colorizer.data.pipeline import run_pipeline
-from illustration_colorizer.train.config import TrainConfig
-from illustration_colorizer.train.run_training import run_training
-from shared.hydra import load_config
+
+def _render_models_override(models: Any) -> str:
+    if isinstance(models, str):
+        return models
+    if isinstance(models, (list, tuple)):
+        return ",".join(str(model) for model in models)
+    return str(models)
 
 
 class ColorizerCLI:
-    """CLI entrypoint for data prep and training."""
+    """CLI entrypoint for benchmarking and image colorization."""
 
-    def data(
+    def benchmark(
         self,
-        raw_dir: str | None = None,
-        processed_dir: str | None = None,
-        models_dir: str | None = None,
-    ) -> None:
-        project_root = Path(__file__).resolve().parent
-        overrides = []
-        if raw_dir:
-            overrides.append(f"data.raw_dir={raw_dir}")
-        if processed_dir:
-            overrides.append(f"data.processed_dir={processed_dir}")
-        if models_dir:
-            overrides.append(f"data.models_dir={models_dir}")
-        config = load_config(
-            project_root / "illustration_colorizer" / "conf", overrides
-        )
-        paths = data_paths_from_config(config)
-        run_pipeline(paths)
-
-    def train(
-        self,
-        name: str | None = None,
-        epochs: int | None = None,
+        *config_overrides: str,
+        models: str | None = None,
+        dataset_source: str | None = None,
+        hf_dataset_dir: str | None = None,
+        input_dir: str | None = None,
+        target_dir: str | None = None,
+        reference_dir: str | None = None,
+        sample_limit: int | None = None,
+        output_dir: str | None = None,
+        json_name: str | None = None,
+        csv_name: str | None = None,
+        run_id: str | None = None,
+        save_images: bool | None = None,
+        max_saved_images: int | None = None,
         batch_size: int | None = None,
-        learning_rate: float | None = None,
-    ) -> None:
-        project_root = Path(__file__).resolve().parent
-        overrides = []
-        if name:
-            overrides.append(f"train.name={name}")
-        if epochs is not None:
-            overrides.append(f"train.epochs={epochs}")
-        if batch_size is not None:
-            overrides.append(f"train.batch_size={batch_size}")
-        if learning_rate is not None:
-            overrides.append(f"train.learning_rate={learning_rate}")
+        device: str | None = None,
+        metrics: str | None = None,
+        reference_mode: str | None = None,
+        reference_group_key: str | None = None,
+    ) -> dict[str, object]:
+        from illustration_colorizer.benchmark.runner import run_benchmark
+
+        project_root = get_project_root(Path(__file__), levels_up=0)
+        overrides: list[str] = []
+
+        if models:
+            overrides.append(
+                f"benchmark.selected_models=[{_render_models_override(models)}]"
+            )
+
+        if metrics:
+            overrides.append(
+                f"benchmark.metrics.enabled=[{_render_models_override(metrics)}]"
+            )
+
+        append_override(overrides, "benchmark.dataset.source", dataset_source)
+        append_override(overrides, "benchmark.dataset.hf_dataset_dir", hf_dataset_dir)
+        append_override(overrides, "benchmark.dataset.input_dir", input_dir)
+        append_override(overrides, "benchmark.dataset.target_dir", target_dir)
+        append_override(overrides, "benchmark.dataset.reference_dir", reference_dir)
+        append_override(overrides, "benchmark.dataset.limit", sample_limit)
+        append_override(overrides, "benchmark.report.output_dir", output_dir)
+        append_override(overrides, "benchmark.report.json_name", json_name)
+        append_override(overrides, "benchmark.report.csv_name", csv_name)
+        append_override(overrides, "benchmark.report.run_id", run_id)
+        append_override(overrides, "benchmark.report.save_images", save_images)
+        append_override(
+            overrides, "benchmark.report.max_saved_images", max_saved_images
+        )
+        append_override(overrides, "benchmark.runtime.batch_size", batch_size)
+        append_override(overrides, "benchmark.runtime.device", device)
+        append_override(overrides, "benchmark.reference.mode", reference_mode)
+        append_override(
+            overrides, "benchmark.reference.group_key", reference_group_key
+        )
+        extend_overrides(overrides, config_overrides)
+
         config = load_config(
             project_root / "illustration_colorizer" / "conf", overrides
         )
-        train_cfg = TrainConfig(
-            name=config.train.name,
-            epochs=config.train.epochs,
-            batch_size=config.train.batch_size,
-            learning_rate=config.train.learning_rate,
+        return run_benchmark(project_root=project_root, config=config)
+
+    def aggregate_panels(
+        self,
+        *config_overrides: str,
+        models: str,
+        benchmark_output_dir: str | None = None,
+        generated_dir_name: str | None = None,
+        output_dir_name: str | None = None,
+        max_images: int | None = None,
+    ) -> dict[str, object]:
+        from illustration_colorizer.benchmark.aggregate import (
+            aggregate_generated_panels,
         )
-        run_training(project_root, train_cfg)
+
+        project_root = get_project_root(Path(__file__), levels_up=0)
+        overrides: list[str] = []
+        extend_overrides(overrides, config_overrides)
+        config = load_config(
+            project_root / "illustration_colorizer" / "conf", overrides
+        )
+
+        benchmark_cfg = config.benchmark.report
+        selected_models = [
+            model_id.strip() for model_id in _render_models_override(models).split(",")
+            if model_id.strip()
+        ]
+        return aggregate_generated_panels(
+            project_root=project_root,
+            models=selected_models,
+            benchmark_output_dir=(
+                benchmark_output_dir or str(benchmark_cfg.output_dir)
+            ),
+            generated_dir_name=(
+                generated_dir_name or str(benchmark_cfg.generated_dir_name)
+            ),
+            output_dir_name=(output_dir_name or "comparisons"),
+            max_images=max_images,
+        )
+
+    def prepare_models(
+        self,
+        *config_overrides: str,
+        models: str | None = None,
+        allow_download: bool | None = None,
+    ) -> dict[str, object]:
+        from illustration_colorizer.models import prepare_model_artifacts
+
+        project_root = get_project_root(Path(__file__), levels_up=0)
+        overrides: list[str] = []
+
+        if models:
+            overrides.append(
+                f"benchmark.selected_models=[{_render_models_override(models)}]"
+            )
+
+        if allow_download is not None:
+            rendered = "true" if allow_download else "false"
+            overrides.append(f"models.ddcolor.allow_download={rendered}")
+            overrides.append(f"models.deoldify.allow_download={rendered}")
+            overrides.append(f"models.colorcomic_auto.allow_download={rendered}")
+            overrides.append(f"models.colorcomic_reference.allow_download={rendered}")
+            overrides.append(f"models.cobra.allow_download={rendered}")
+
+        extend_overrides(overrides, config_overrides)
+        config = load_config(
+            project_root / "illustration_colorizer" / "conf", overrides
+        )
+        return prepare_model_artifacts(project_root=project_root, config=config)
 
 
 def main() -> None:
+    import fire
+
     fire.Fire(ColorizerCLI)
 
 

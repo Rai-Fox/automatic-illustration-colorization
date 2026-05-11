@@ -1,6 +1,12 @@
 defaults:
-  - data: default
-  - train: baseline
+  - benchmark: default
+  - model@models.ddcolor: ddcolor
+  - model@models.deoldify: deoldify
+  - model@models.colorcomic_auto: colorcomic_auto
+  - model@models.colorcomic_reference: colorcomic_reference
+  - model@models.cgan_reference: cgan_reference
+  - model@models.cobra: cobra
+  - _self_
 
 hydra:
   run:

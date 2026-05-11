@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -9,9 +10,12 @@ from torchmetrics.image.kid import KernelInceptionDistance
 
 from illustration_colorizer.benchmark.image_utils import (
     numpy_images_to_torch_batch,
+    resolve_torch_device,
     torch_batch_to_uint8,
 )
 from illustration_colorizer.benchmark.metrics.base import BenchmarkMetric
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -35,8 +39,21 @@ class LpipsMetric(BenchmarkMetric):
         if len(y_images) != len(g_images):
             raise ValueError("y_images and g_images must have the same length.")
 
-        y_batch = numpy_images_to_torch_batch(y_images, image_size=self.image_size, device=self.device)
-        g_batch = numpy_images_to_torch_batch(g_images, image_size=self.image_size, device=self.device)
+        effective_device = resolve_torch_device(
+            self.device,
+            logger=LOGGER,
+            context=self.name,
+        )
+        y_batch = numpy_images_to_torch_batch(
+            y_images,
+            image_size=self.image_size,
+            device=effective_device,
+        )
+        g_batch = numpy_images_to_torch_batch(
+            g_images,
+            image_size=self.image_size,
+            device=effective_device,
+        )
 
         y_batch = y_batch * 2.0 - 1.0
         g_batch = g_batch * 2.0 - 1.0
@@ -75,10 +92,25 @@ class KidMetric(BenchmarkMetric):
         if g_images is None:
             raise ValueError("g_images is required for KID.")
         if len(y_images) < 2 or len(g_images) < 2:
-            raise ValueError("KID requires at least 2 generated and 2 reference images.")
+            raise ValueError(
+                "KID requires at least 2 generated and 2 reference images."
+            )
 
-        y_batch = numpy_images_to_torch_batch(y_images, image_size=self.image_size, device=self.device)
-        g_batch = numpy_images_to_torch_batch(g_images, image_size=self.image_size, device=self.device)
+        effective_device = resolve_torch_device(
+            self.device,
+            logger=LOGGER,
+            context=self.name,
+        )
+        y_batch = numpy_images_to_torch_batch(
+            y_images,
+            image_size=self.image_size,
+            device=effective_device,
+        )
+        g_batch = numpy_images_to_torch_batch(
+            g_images,
+            image_size=self.image_size,
+            device=effective_device,
+        )
         y_uint8 = torch_batch_to_uint8(y_batch)
         g_uint8 = torch_batch_to_uint8(g_batch)
 
@@ -86,7 +118,9 @@ class KidMetric(BenchmarkMetric):
         if subset_size < 2:
             raise ValueError("kid_subset_size must be at least 2 after clipping.")
 
-        kid = KernelInceptionDistance(subset_size=subset_size, normalize=False).to(self.device)
+        kid = KernelInceptionDistance(subset_size=subset_size, normalize=False).to(
+            effective_device
+        )
         kid.update(g_uint8, real=True)
         kid.update(y_uint8, real=False)
 

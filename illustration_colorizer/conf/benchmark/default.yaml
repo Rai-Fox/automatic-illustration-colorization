@@ -1,0 +1,53 @@
+dataset:
+  source: hf_arrow
+  hf_dataset_dir: data/raw/Manga_colorization
+  input_dir: null
+  target_dir: null
+  reference_dir: null
+  limit: 8
+
+reference:
+  mode: none
+  group_key: title
+  sampling: balanced_titles
+
+metrics:
+  enabled:
+    - colorfulness
+    - line_preservation_score
+    - ink_preservation_score
+    - lpips
+    - kid
+  kid_subset_size: 50
+  lpips_net: alex
+  lpips_batch_size: 8
+
+report:
+  output_dir: outputs/benchmark
+  json_name: report.json
+  csv_name: summary.csv
+  per_model_dir_name: reports
+  per_run_dir_name: runs
+  run_id: null
+  save_images: true
+  generated_dir_name: generated
+  max_saved_images: 100
+
+runtime:
+  device: cuda
+  batch_size: 1
+  collect_resources: true
+  resource_poll_interval_seconds: 0.05
+  fail_fast: false
+
+logging:
+  level: INFO
+  per_sample: true
+
+warnings:
+  suppress_known: true
+
+selected_models:
+  - ddcolor
+  - deoldify
+  - colorcomic_auto
