@@ -1,6 +1,12 @@
 host: ${oc.env:API_HOST,"0.0.0.0"}
 port: ${oc.env:API_PORT,8000}
 log_level: ${oc.env:API_LOG_LEVEL,"info"}
-model_path: ${oc.env:COLORIZATION_MODEL_PATH,"data/models/model.pt"}
+model_id: ${oc.env:COLORIZATION_MODEL_ID,"passthrough"}
+model_path: ${oc.env:COLORIZATION_MODEL_PATH,""}
+device: ${oc.env:COLORIZATION_DEVICE,"cpu"}
 max_image_size: ${oc.env:MAX_IMAGE_SIZE,4096}
+max_upload_bytes: ${oc.env:MAX_UPLOAD_BYTES,10485760}
 redis_url: ${oc.env:REDIS_URL,"redis://redis:6379/0"}
+service_storage_dir: ${oc.env:SERVICE_STORAGE_DIR,"outputs/service"}
+job_ttl_seconds: ${oc.env:JOB_TTL_SECONDS,86400}
+enabled_models: ${oc.env:ENABLED_MODELS,""}

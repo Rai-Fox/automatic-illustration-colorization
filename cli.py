@@ -35,6 +35,7 @@ class ColorizerCLI:
         batch_size: int | None = None,
         device: str | None = None,
         metrics: str | None = None,
+        mode: str | None = None,
         reference_mode: str | None = None,
         reference_group_key: str | None = None,
     ) -> dict[str, object]:
@@ -69,6 +70,7 @@ class ColorizerCLI:
         )
         append_override(overrides, "benchmark.runtime.batch_size", batch_size)
         append_override(overrides, "benchmark.runtime.device", device)
+        append_override(overrides, "benchmark.mode", mode)
         append_override(overrides, "benchmark.reference.mode", reference_mode)
         append_override(
             overrides, "benchmark.reference.group_key", reference_group_key
@@ -88,6 +90,9 @@ class ColorizerCLI:
         generated_dir_name: str | None = None,
         output_dir_name: str | None = None,
         max_images: int | None = None,
+        sample_limit: int | None = None,
+        reference_mode: str | None = None,
+        reference_group_key: str | None = None,
     ) -> dict[str, object]:
         from illustration_colorizer.benchmark.aggregate import (
             aggregate_generated_panels,
@@ -95,6 +100,11 @@ class ColorizerCLI:
 
         project_root = get_project_root(Path(__file__), levels_up=0)
         overrides: list[str] = []
+        append_override(overrides, "benchmark.dataset.limit", sample_limit)
+        append_override(overrides, "benchmark.reference.mode", reference_mode)
+        append_override(
+            overrides, "benchmark.reference.group_key", reference_group_key
+        )
         extend_overrides(overrides, config_overrides)
         config = load_config(
             project_root / "illustration_colorizer" / "conf", overrides
@@ -116,6 +126,8 @@ class ColorizerCLI:
             ),
             output_dir_name=(output_dir_name or "comparisons"),
             max_images=max_images,
+            dataset_config=config.benchmark.dataset,
+            reference_config=config.benchmark.reference,
         )
 
     def prepare_models(

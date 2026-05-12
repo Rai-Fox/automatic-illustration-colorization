@@ -3,28 +3,100 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
+      args:
+        EXTRA_UV_GROUPS: ${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      - ./outputs/service:/app/outputs/service
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - SERVICE_STORAGE_DIR=/app/outputs/service
+      - COLORIZATION_MODEL_ID=${COLORIZATION_MODEL_ID:-ddcolor}
+      - COLORIZATION_DEVICE=${COLORIZATION_DEVICE:-cpu}
+      - ENABLED_MODELS=${ENABLED_MODELS:-cgan_reference,colorcomic_auto,ddcolor,deoldify}
+      - EXTRA_UV_GROUPS=${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+      args:
+        EXTRA_UV_GROUPS: ${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
+    volumes:
+      - ./data:/app/data
+      - ./outputs/service:/app/outputs/service
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SERVICE_STORAGE_DIR=/app/outputs/service
+      - COLORIZATION_MODEL_ID=${COLORIZATION_MODEL_ID:-ddcolor}
+      - COLORIZATION_DEVICE=${COLORIZATION_DEVICE:-cpu}
+      - ENABLED_MODELS=${ENABLED_MODELS:-cgan_reference,colorcomic_auto,ddcolor,deoldify}
+      - EXTRA_UV_GROUPS=${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
+    depends_on:
+      redis:
+        condition: service_healthy
   bot:
     build:
       context: .
       dockerfile: docker/Dockerfile.bot
     depends_on:
-      - api
-      - redis
-    env_file:
-      - .env
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - COLORIZATION_API_URL=http://api:8000
       - REDIS_URL=redis://redis:6379/0
+      - BOT_DATABASE_URL=${BOT_DATABASE_URL:-postgresql://colorizer:colorizer@postgres:5432/colorizer}
+      - BOT_MAX_REFERENCE_BYTES=${BOT_MAX_REFERENCE_BYTES:-10485760}
+      - BOT_MAX_REFERENCE_SIDE=${BOT_MAX_REFERENCE_SIDE:-4096}
 
   redis:
     image: redis:7.2-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=colorizer
+      - POSTGRES_USER=colorizer
+      - POSTGRES_PASSWORD=colorizer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U colorizer -d colorizer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:

@@ -62,6 +62,42 @@ def _patch_fake_arrow_dataset(monkeypatch, tmp_path: Path) -> Path:
     return dataset_dir
 
 
+def test_none_reference_mode_balances_titles(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _patch_fake_arrow_dataset(monkeypatch, tmp_path)
+
+    dataset = load_hf_arrow_benchmark_dataset(
+        project_root=tmp_path,
+        dataset_dir=str(dataset_dir),
+        limit=5,
+        reference_config={
+            "mode": "none",
+            "group_key": "title",
+            "sampling": "balanced_titles",
+        },
+    )
+
+    assert [sample.sample_id for sample in dataset.samples] == [
+        "0",
+        "3",
+        "6",
+        "1",
+        "4",
+    ]
+    assert [sample.metadata["title"] for sample in dataset.samples] == [
+        "A",
+        "B",
+        "C",
+        "A",
+        "B",
+    ]
+    assert all(sample.reference_image is None for sample in dataset.samples)
+    assert dataset.metadata["title_count"] == 3
+    assert dataset.metadata["excluded_seed_samples"] == 0
+
+
 def test_fixed_reference_mode_uses_first_color_image_per_title(
     monkeypatch,
     tmp_path: Path,

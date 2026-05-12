@@ -4,12 +4,13 @@ set -uo pipefail
 source "$(dirname "$0")/benchmark_common.sh"
 
 MODEL="deoldify"
-RUN_ID="${RUN_ID:-deoldify_${STAMP}}"
-SAMPLE_LIMIT="${SAMPLE_LIMIT:-8}"
-BATCH_SIZE="${BATCH_SIZE:-1}"
+SAMPLE_LIMIT="${SAMPLE_LIMIT:-}"
+BATCH_SIZE="${BATCH_SIZE:-16}"
 METRICS="${METRICS:-${FULL_METRICS}}"
 REFERENCE_MODE="${REFERENCE_MODE:-none}"
 UV_GROUPS="${UV_GROUPS:-benchmark model-deoldify}"
+RUN_SUFFIX="${DEVICE}${RUN_NAME:+_${RUN_NAME}}"
+RUN_ID="${RUN_ID:-${MODEL}_${RUN_SUFFIX}}"
 
 run_single_model_benchmark \
   "${MODEL}" \

@@ -17,8 +17,6 @@ COPY services ./services
 COPY shared ./shared
 
 ARG EXTRA_UV_GROUPS=""
-RUN uv sync --frozen --no-dev --group api ${EXTRA_UV_GROUPS}
+RUN uv sync --frozen --no-dev --group api --group worker ${EXTRA_UV_GROUPS}
 
-EXPOSE 8000
-
-CMD ["sh", "-c", "uv run --frozen --no-dev --group api ${EXTRA_UV_GROUPS:-} python -m services.api.app.run"]
+CMD ["sh", "-c", "uv run --frozen --no-dev --group api --group worker ${EXTRA_UV_GROUPS:-} python -m services.worker.run"]

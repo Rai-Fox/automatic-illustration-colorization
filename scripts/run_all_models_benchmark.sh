@@ -3,10 +3,14 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-SAMPLE_LIMIT="${SAMPLE_LIMIT:-8}"
-MAX_SAVED_IMAGES="${MAX_SAVED_IMAGES:-100}"
+RUN_NAME="${RUN_NAME:-}"
+SAMPLE_LIMIT="${SAMPLE_LIMIT:-}"
+MAX_SAVED_IMAGES="${MAX_SAVED_IMAGES:-1000000}"
 DEVICE="${DEVICE:-cuda}"
-STAMP="${RUN_STAMP:-$(date +%Y%m%d_%H%M%S)}"
+BENCHMARK_MODE="${BENCHMARK_MODE:-full}"
+STAMP="${RUN_STAMP:-${RUN_NAME:-parameterized}}"
+LPIPS_BATCH_SIZE="${LPIPS_BATCH_SIZE:-32}"
+KID_SUBSET_SIZE="${KID_SUBSET_SIZE:-1000}"
 
 FULL_METRICS="${FULL_METRICS:-colorfulness,line_preservation_score,ink_preservation_score,lpips,kid}"
 LIGHT_METRICS="${LIGHT_METRICS:-colorfulness,line_preservation_score,ink_preservation_score}"
@@ -17,10 +21,14 @@ run_model_script() {
 
   echo
   echo "==> ${script}"
+  RUN_NAME="${RUN_NAME}" \
   RUN_STAMP="${STAMP}" \
   SAMPLE_LIMIT="${SAMPLE_LIMIT}" \
   MAX_SAVED_IMAGES="${MAX_SAVED_IMAGES}" \
   DEVICE="${DEVICE}" \
+  BENCHMARK_MODE="${BENCHMARK_MODE}" \
+  LPIPS_BATCH_SIZE="${LPIPS_BATCH_SIZE}" \
+  KID_SUBSET_SIZE="${KID_SUBSET_SIZE}" \
   FULL_METRICS="${FULL_METRICS}" \
   LIGHT_METRICS="${LIGHT_METRICS}" \
   REFERENCE_MODE="${REFERENCE_MODE:-}" \
@@ -50,12 +58,16 @@ run_cobra_script() {
   COBRA_TOP_K="${COBRA_TOP_K:-8}" \
   COBRA_MAX_SIDE="${COBRA_MAX_SIDE:-512}" \
   COBRA_HIGH_RES_SCALE="${COBRA_HIGH_RES_SCALE:-1.0}" \
+  COBRA_BATCH_SIZE="${COBRA_BATCH_SIZE:-1}" \
   run_model_script "run_cobra_benchmark.sh" "$@"
 }
 
-echo "Benchmark run stamp: ${STAMP}"
-echo "Sample limit: ${SAMPLE_LIMIT}"
+echo "Benchmark run name: ${RUN_NAME:-model-parameter defaults}"
+echo "Sample limit: ${SAMPLE_LIMIT:-all}"
 echo "Device: ${DEVICE}"
+echo "Benchmark mode: ${BENCHMARK_MODE}"
+echo "LPIPS batch size: ${LPIPS_BATCH_SIZE}"
+echo "KID subset size: ${KID_SUBSET_SIZE}"
 
 # Automatic colorization models. Full metrics are reasonable here.
 run_model_script "run_ddcolor_benchmark.sh"
@@ -74,14 +86,15 @@ run_reference_script "run_colorcomic_reference_benchmark.sh" "fixed_by_title"
 run_reference_script "run_cgan_reference_benchmark.sh" "previous_output_by_title"
 run_reference_script "run_colorcomic_reference_benchmark.sh" "previous_output_by_title"
 
-# Cobra is CUDA-only and memory-sensitive. Increase COBRA_SAMPLE_LIMIT,
-# COBRA_STEPS, COBRA_TOP_K, and COBRA_MAX_SIDE manually after the run is stable
-# on the target GPU.
-run_cobra_script "fixed_by_title"
-run_cobra_script "previous_output_by_title"
+# Cobra is CUDA-only and memory-sensitive. It is excluded from the default
+# all-model run; launch scripts/run_cobra_benchmark.sh manually when needed.
+if [[ "${RUN_COBRA:-false}" == "true" ]]; then
+  run_cobra_script "fixed_by_title"
+  run_cobra_script "previous_output_by_title"
+fi
 
 echo
 echo "Reports:"
 echo "  Per-model runs:   outputs/benchmark/reports/<model>/<run_id>/report.json"
-echo "  Run snapshots:    outputs/benchmark/runs/*_${STAMP}/<model>/report.json"
-echo "  Images:           outputs/benchmark/generated/<model>/"
+echo "  Run snapshots:    outputs/benchmark/runs/<run_id>/<model>/report.json"
+echo "  Images:           outputs/benchmark/generated/<model>/<run_id>/"

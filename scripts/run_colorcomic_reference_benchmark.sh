@@ -4,12 +4,13 @@ set -uo pipefail
 source "$(dirname "$0")/benchmark_common.sh"
 
 MODEL="colorcomic_reference"
-RUN_ID="${RUN_ID:-colorcomic_reference_${REFERENCE_MODE:-fixed_by_title}_${STAMP}}"
-SAMPLE_LIMIT="${SAMPLE_LIMIT:-8}"
-BATCH_SIZE="${BATCH_SIZE:-1}"
+SAMPLE_LIMIT="${SAMPLE_LIMIT:-}"
+BATCH_SIZE="${BATCH_SIZE:-8}"
 METRICS="${METRICS:-${LIGHT_METRICS}}"
 REFERENCE_MODE="${REFERENCE_MODE:-fixed_by_title}"
 UV_GROUPS="${UV_GROUPS:-benchmark model-colorcomic}"
+RUN_SUFFIX="${REFERENCE_MODE}_${DEVICE}${RUN_NAME:+_${RUN_NAME}}"
+RUN_ID="${RUN_ID:-${MODEL}_${RUN_SUFFIX}}"
 
 run_single_model_benchmark \
   "${MODEL}" \

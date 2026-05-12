@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,27 @@ from shared.images import load_rgb_image
 from shared.paths import find_file_by_stem, resolve_from_root
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
+LOGGER = logging.getLogger(__name__)
+
+
+class LazyImageArray:
+    def __init__(self, loader: Any) -> None:
+        self._loader = loader
+
+    def _load(self) -> np.ndarray:
+        return np.asarray(self._loader())
+
+    def __array__(self, dtype: Any = None) -> np.ndarray:
+        array = self._load()
+        if dtype is not None:
+            return np.asarray(array, dtype=dtype)
+        return np.asarray(array)
+
+    def __getitem__(self, key: Any) -> Any:
+        return self._load()[key]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
 
 
 @dataclass(frozen=True)
@@ -62,6 +84,16 @@ def _balanced_indices(
             if limit is not None and len(selected) >= limit:
                 return selected
     return selected
+
+
+def _lazy_hf_image(dataset: Any, index: int, column: str) -> LazyImageArray:
+    def _load() -> np.ndarray:
+        image = dataset[index].get(column)
+        if image is None:
+            raise ValueError(f"HF Arrow row {index} has no image column {column!r}.")
+        return np.asarray(image.convert("RGB"))
+
+    return LazyImageArray(_load)
 
 
 def load_folder_dataset(
@@ -171,7 +203,7 @@ def load_hf_arrow_benchmark_dataset(
         raise ValueError(f"Unsupported reference sampling: {sampling}")
 
     selected_indices: list[int]
-    reference_by_index: dict[int, tuple[np.ndarray, int, str]] = {}
+    reference_by_index: dict[int, tuple[int, str]] = {}
     dataset_metadata: dict[str, Any] = {
         "reference_mode": mode,
         "reference_group_key": group_key,
@@ -180,75 +212,81 @@ def load_hf_arrow_benchmark_dataset(
         "excluded_seed_samples": 0,
     }
 
-    if mode == "none":
-        selected_indices = list(range(len(dataset)))
-        if limit is not None:
-            selected_indices = selected_indices[: min(limit, len(selected_indices))]
-        dataset_metadata["title_count"] = len(
-            {str(dataset[index].get(group_key)) for index in selected_indices}
-        )
-    else:
-        if group_key not in dataset.column_names:
+    if group_key not in dataset.column_names:
+        if mode != "none":
             raise ValueError(
                 f"Reference mode {mode} requires HF Arrow column {group_key!r}."
             )
+        selected_indices = list(range(len(dataset)))
+        if limit is not None:
+            selected_indices = selected_indices[: min(limit, len(selected_indices))]
+    else:
         titles = [str(value) for value in dataset[group_key]]
         grouped = _group_indices_by_value(titles)
-        eligible_by_title: dict[str, list[int]] = {}
-        seed_by_title: dict[str, int] = {}
-        for title, indices in grouped.items():
-            if len(indices) < 2:
-                continue
-            seed_by_title[title] = indices[0]
-            eligible_by_title[title] = indices[1:]
-
-        selected_indices = _balanced_indices(eligible_by_title, limit=limit)
-        selected_titles = {titles[index] for index in selected_indices}
-        dataset_metadata["title_count"] = len(selected_titles)
-        dataset_metadata["excluded_seed_samples"] = len(selected_titles)
-
-        seed_images: dict[str, np.ndarray] = {}
-        for title in selected_titles:
-            seed_index = seed_by_title[title]
-            seed_images[title] = np.asarray(
-                dataset[seed_index]["color_image"].convert("RGB")
+        if mode == "none":
+            selected_indices = (
+                _balanced_indices(grouped, limit=limit)
+                if limit is not None
+                else list(range(len(dataset)))
             )
+            selected_titles = {titles[index] for index in selected_indices}
+            dataset_metadata["title_count"] = len(selected_titles)
+        else:
+            eligible_by_title: dict[str, list[int]] = {}
+            seed_by_title: dict[str, int] = {}
+            for title, indices in grouped.items():
+                if len(indices) < 2:
+                    continue
+                seed_by_title[title] = indices[0]
+                eligible_by_title[title] = indices[1:]
 
-        reference_source = "fixed_gt" if mode == "fixed_by_title" else "gt_seed"
-        for index in selected_indices:
-            title = titles[index]
-            reference_by_index[index] = (
-                seed_images[title],
-                seed_by_title[title],
-                reference_source,
-            )
+            selected_indices = _balanced_indices(eligible_by_title, limit=limit)
+            selected_titles = {titles[index] for index in selected_indices}
+            dataset_metadata["title_count"] = len(selected_titles)
+            dataset_metadata["excluded_seed_samples"] = len(selected_titles)
 
+            reference_source = "fixed_gt" if mode == "fixed_by_title" else "gt_seed"
+            for index in selected_indices:
+                title = titles[index]
+                reference_by_index[index] = (
+                    seed_by_title[title],
+                    reference_source,
+                )
+
+    LOGGER.info(
+        "Creating %d lazy HF Arrow benchmark samples",
+        len(selected_indices),
+    )
+    title_values = dataset[group_key] if group_key in dataset.column_names else None
+    tag_values = dataset["tags"] if "tags" in dataset.column_names else None
     samples: list[BenchmarkSample] = []
     for index in selected_indices:
-        row = dataset[index]
+        if len(samples) and len(samples) % 500 == 0:
+            LOGGER.info(
+                "Created %d/%d lazy benchmark samples",
+                len(samples),
+                len(selected_indices),
+            )
         reference_image = None
         reference_sample_id = None
         reference_source = "none"
         if index in reference_by_index:
-            reference_image, reference_index, reference_source = reference_by_index[
-                index
-            ]
+            reference_index, reference_source = reference_by_index[index]
+            reference_image = _lazy_hf_image(dataset, reference_index, "color_image")
             reference_sample_id = str(reference_index)
 
         samples.append(
             BenchmarkSample(
                 sample_id=str(index),
-                input_image=np.asarray(row["bw_image"].convert("RGB")),
-                target_image=(
-                    np.asarray(row["color_image"].convert("RGB"))
-                    if row.get("color_image") is not None
-                    else None
-                ),
+                input_image=_lazy_hf_image(dataset, index, "bw_image"),
+                target_image=_lazy_hf_image(dataset, index, "color_image"),
                 reference_image=reference_image,
                 metadata={
-                    "title": row.get("title"),
-                    "reference_group_value": row.get(group_key),
-                    "tags": row.get("tags"),
+                    "title": title_values[index] if title_values is not None else None,
+                    "reference_group_value": (
+                        title_values[index] if title_values is not None else None
+                    ),
+                    "tags": tag_values[index] if tag_values is not None else None,
                     "reference_mode": mode,
                     "reference_sample_id": reference_sample_id,
                     "reference_source": reference_source,
@@ -256,6 +294,7 @@ def load_hf_arrow_benchmark_dataset(
             )
         )
 
+    LOGGER.info("Created %d lazy benchmark samples", len(samples))
     return BenchmarkDataset(samples=samples, metadata=dataset_metadata)
 
 

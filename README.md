@@ -81,6 +81,17 @@ Run all configured models one by one:
 bash scripts/run_all_models_benchmark.sh
 ```
 
+The default all-model script skips Cobra. Run Cobra explicitly with
+`bash scripts/run_cobra_benchmark.sh`, or include it in the all-model run with
+`RUN_COBRA=true`.
+
+Production defaults run on the full dataset. Script runs are stable by default:
+`run_id` is derived from the model, reference mode when applicable, and device.
+For example, `ddcolor_cuda`, `cgan_reference_fixed_by_title_cuda`, and
+`cobra_previous_output_by_title_cuda`.
+For full-dataset runs the scripts pass `benchmark.dataset.limit=null`, overriding
+the config default limit.
+
 Run one model:
 
 ```bash
@@ -95,10 +106,43 @@ bash scripts/run_cobra_benchmark.sh
 Common environment overrides:
 
 ```bash
+RUN_NAME=experiment_01 bash scripts/run_all_models_benchmark.sh
 SAMPLE_LIMIT=16 DEVICE=cuda bash scripts/run_ddcolor_benchmark.sh
-MAX_SAVED_IMAGES=100 bash scripts/run_all_models_benchmark.sh
+SAMPLE_LIMIT=all bash scripts/run_ddcolor_benchmark.sh
+MAX_SAVED_IMAGES=1000000 bash scripts/run_all_models_benchmark.sh
 METRICS=colorfulness,line_preservation_score bash scripts/run_deoldify_benchmark.sh
+LPIPS_BATCH_SIZE=32 KID_SUBSET_SIZE=1000 bash scripts/run_all_models_benchmark.sh
 ```
+
+`RUN_NAME` is a profile suffix. It is still combined with the model id, device,
+and reference mode for reference models. For example,
+`RUN_NAME=experiment_01` creates paths such as `ddcolor_cuda_experiment_01` and
+`cgan_reference_fixed_by_title_cuda_experiment_01`.
+
+Default script batch sizes:
+
+```text
+ddcolor: 32
+deoldify: 16
+colorcomic_auto: 8
+cgan_reference: 32
+colorcomic_reference: 8
+cobra: 1
+```
+
+Override `BATCH_SIZE` for most scripts or `COBRA_BATCH_SIZE` for Cobra.
+
+Benchmark modes:
+
+```bash
+BENCHMARK_MODE=full bash scripts/run_ddcolor_benchmark.sh
+BENCHMARK_MODE=images_only bash scripts/run_ddcolor_benchmark.sh
+BENCHMARK_MODE=metrics_only bash scripts/run_ddcolor_benchmark.sh
+```
+
+- `full` runs inference, saves result images, and computes metrics.
+- `images_only` runs inference and saves all result images for the selected samples, but skips metrics.
+- `metrics_only` does not load models; it reads existing results from `outputs/benchmark/generated/<model>/<run_id>` and computes metrics from them.
 
 Reference modes:
 
@@ -137,6 +181,13 @@ Cobra:
 uv run --group benchmark --group model-cobra python cli.py benchmark --models cobra --reference_mode fixed_by_title --sample_limit=1 --device cuda --batch_size 1 models.cobra.max_side=512 models.cobra.num_inference_steps=4 models.cobra.top_k=8
 ```
 
+Precompute images first, then compute metrics later:
+
+```bash
+uv run --group benchmark --group model-ddcolor python cli.py benchmark --models ddcolor --mode images_only --sample_limit=32 --device cuda --run_id ddcolor_precomputed
+uv run --group benchmark --group model-ddcolor python cli.py benchmark --models ddcolor --mode metrics_only --sample_limit=32 --device cuda --run_id ddcolor_precomputed
+```
+
 ## Reference Benchmark Modes
 
 - `none` - no reference image is attached.
@@ -144,7 +195,8 @@ uv run --group benchmark --group model-cobra python cli.py benchmark --models co
 - `previous_output_by_title` - for every title, the first `color_image` seeds the sequence; each next sample uses the previous successful model output as reference.
 
 For title-aware modes, HF Arrow samples are balanced by `title` when
-`benchmark.dataset.limit` is small.
+`benchmark.dataset.limit` is small. The same balanced `title` sampling is used
+for `reference_mode=none` when the dataset has a `title` column.
 
 ## Reports and Generated Images
 
@@ -168,18 +220,27 @@ outputs/benchmark/runs/<run_id>/<model>/summary.csv
 Generated comparison panels are saved as:
 
 ```text
-outputs/benchmark/generated/<model>/<sample_id>.png
-outputs/benchmark/generated/<model>/manifest.json
+outputs/benchmark/generated/<model>/<run_id>/<sample_id>.png
+outputs/benchmark/generated/<model>/<run_id>/manifest.json
 ```
 
-Each generated panel contains:
+Per-model generated files contain only the model result image. They do not
+include `bw` or ground truth tiles.
+
+Aggregate comparison panels are built by `aggregate_panels` and contain:
 
 ```text
-bw | ground truth | model result
+bw | ground truth | model result 1 | model result 2 | ...
 ```
 
 The top-level `outputs/benchmark/report.json` and `summary.csv` represent the
 latest aggregate run and may be overwritten.
+
+`metrics_only` expects generated result images and `manifest.json` to already
+exist in `outputs/benchmark/generated/<model>/<run_id>`. Pass the same
+`--run_id` that was used for `images_only`; otherwise the runner will use the
+latest generated run for that model. The `sample_limit`, dataset source, and
+reference mode should match the earlier `images_only` run so sample ids line up.
 
 ## Aggregate Panels
 
@@ -187,6 +248,12 @@ After running several models, build shared comparison panels:
 
 ```bash
 uv run --group benchmark python cli.py aggregate_panels --models ddcolor,deoldify,cgan_reference --max_images=8
+```
+
+To compare the same model with different parameters, pass run-scoped model specs:
+
+```bash
+uv run --group benchmark python cli.py aggregate_panels --models ddcolor:ddcolor_small,ddcolor:ddcolor_large --max_images=8
 ```
 
 ## Configuration

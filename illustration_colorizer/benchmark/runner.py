@@ -277,30 +277,100 @@ def _save_generated_images(
     *,
     output_dir: Path,
     model_id: str,
+    run_id: str | None = None,
     generated_images: list[tuple[BenchmarkSample, np.ndarray]],
     max_saved_images: int,
 ) -> None:
+    model_dir = _prepare_generated_model_dir(
+        output_dir=output_dir,
+        model_id=model_id,
+        run_id=run_id,
+    )
+    manifest: dict[str, dict[str, Any]] = {}
+    for sample, image in generated_images[:max_saved_images]:
+        _save_generated_image(
+            model_dir=model_dir,
+            manifest=manifest,
+            sample=sample,
+            image=image,
+            model_id=model_id,
+            run_id=run_id,
+        )
+    _write_generated_manifest(model_dir, manifest)
+
+
+def _prepare_generated_model_dir(
+    *,
+    output_dir: Path,
+    model_id: str,
+    run_id: str | None,
+) -> Path:
     model_dir = output_dir / model_id
+    if run_id:
+        model_dir = model_dir / _safe_path_name(run_id)
     model_dir.mkdir(parents=True, exist_ok=True)
     for existing_path in model_dir.glob("*.png"):
         existing_path.unlink()
-    manifest: dict[str, dict[str, int | bool]] = {}
-    for sample, image in generated_images[:max_saved_images]:
-        panel = _build_result_panel(sample, image)
-        Image.fromarray(panel).save(model_dir / f"{sample.sample_id}.png")
-        manifest[str(sample.sample_id)] = {
-            "columns": 3 if sample.target_image is not None else 2,
-            "has_ground_truth": sample.target_image is not None,
-            "title": sample.metadata.get("title"),
-            "reference_group_value": sample.metadata.get("reference_group_value"),
-            "reference_mode": sample.metadata.get("reference_mode", "none"),
-            "reference_sample_id": sample.metadata.get("reference_sample_id"),
-            "reference_source": sample.metadata.get("reference_source", "none"),
-        }
+    return model_dir
+
+
+def _save_generated_image(
+    *,
+    model_dir: Path,
+    manifest: dict[str, dict[str, Any]],
+    sample: BenchmarkSample,
+    image: np.ndarray,
+    model_id: str,
+    run_id: str | None,
+) -> None:
+    output_image = to_rgb_uint8(image)
+    Image.fromarray(output_image).save(model_dir / f"{sample.sample_id}.png")
+    manifest[str(sample.sample_id)] = {
+        "format": "result",
+        "columns": 1,
+        "has_ground_truth": sample.target_image is not None,
+        "model_id": model_id,
+        "run_id": run_id,
+        "width": int(output_image.shape[1]),
+        "height": int(output_image.shape[0]),
+        "title": sample.metadata.get("title"),
+        "reference_group_value": sample.metadata.get("reference_group_value"),
+        "reference_mode": sample.metadata.get("reference_mode", "none"),
+        "reference_sample_id": sample.metadata.get("reference_sample_id"),
+        "reference_source": sample.metadata.get("reference_source", "none"),
+    }
+
+
+def _write_generated_manifest(
+    model_dir: Path,
+    manifest: dict[str, dict[str, Any]],
+) -> None:
     (model_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2),
         encoding="utf-8",
     )
+
+
+def _generated_model_dir(
+    *,
+    generated_root: Path,
+    model_id: str,
+    run_id: str | None,
+) -> Path:
+    model_root = generated_root / model_id
+    if run_id:
+        return model_root / _safe_path_name(run_id)
+    if (model_root / "manifest.json").exists():
+        return model_root
+
+    run_dirs = [
+        path
+        for path in model_root.iterdir()
+        if path.is_dir() and (path / "manifest.json").exists()
+    ] if model_root.exists() else []
+    if not run_dirs:
+        return model_root
+    return max(run_dirs, key=lambda path: (path / "manifest.json").stat().st_mtime)
 
 
 def _resize_for_panel(
@@ -335,6 +405,106 @@ def _build_result_panel(
     return np.concatenate(panels, axis=1)
 
 
+def _extract_result_from_panel(
+    panel: np.ndarray,
+    sample: BenchmarkSample,
+) -> np.ndarray:
+    input_image = to_rgb_uint8(sample.input_image)
+    height, width = input_image.shape[:2]
+    panel_rgb = to_rgb_uint8(panel)
+    if panel_rgb.shape[1] < width:
+        raise ValueError(
+            f"Generated panel for sample {sample.sample_id} is narrower than input."
+        )
+    result_panel = panel_rgb[:height, -width:]
+    if result_panel.shape[:2] != (height, width):
+        return _resize_for_panel(result_panel, width=width, height=height)
+    return result_panel
+
+
+def _load_generated_records(
+    *,
+    generated_root: Path,
+    model_id: str,
+    run_id: str | None,
+    samples: list[BenchmarkSample],
+) -> tuple[list[dict[str, Any]], list[SampleFailure]]:
+    model_dir = _generated_model_dir(
+        generated_root=generated_root,
+        model_id=model_id,
+        run_id=run_id,
+    )
+    manifest_path = model_dir / "manifest.json"
+    if not manifest_path.exists():
+        return [], [
+            SampleFailure(
+                sample_id="__model__",
+                error_type="FileNotFoundError",
+                message=f"Manifest not found: {manifest_path}",
+            )
+        ]
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    records: list[dict[str, Any]] = []
+    failures: list[SampleFailure] = []
+    for sample in samples:
+        sample_id = str(sample.sample_id)
+        if sample_id not in manifest:
+            failures.append(
+                SampleFailure(
+                    sample_id=sample_id,
+                    error_type="FileNotFoundError",
+                    message=f"Sample {sample_id} is absent from {manifest_path}",
+                )
+            )
+            continue
+
+        panel_path = model_dir / f"{sample_id}.png"
+        if not panel_path.exists():
+            failures.append(
+                SampleFailure(
+                    sample_id=sample_id,
+                    error_type="FileNotFoundError",
+                    message=f"Generated panel not found: {panel_path}",
+                )
+            )
+            continue
+
+        try:
+            saved_image = np.asarray(Image.open(panel_path).convert("RGB"))
+            metadata = manifest[sample_id]
+            if metadata.get("format") == "result":
+                input_image = to_rgb_uint8(sample.input_image)
+                height, width = input_image.shape[:2]
+                output_image = _resize_for_panel(
+                    saved_image,
+                    width=width,
+                    height=height,
+                )
+            else:
+                output_image = _extract_result_from_panel(saved_image, sample)
+        except Exception as exc:
+            failures.append(
+                SampleFailure(
+                    sample_id=sample_id,
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                )
+            )
+            continue
+
+        records.append(
+            {
+                "sample_id": sample.sample_id,
+                "input_image": sample.input_image,
+                "output_image": output_image,
+                "target_image": sample.target_image,
+            }
+        )
+
+    return records, failures
+
+
 def _record_success(
     *,
     sample: BenchmarkSample,
@@ -344,18 +514,44 @@ def _record_success(
     warnings: list[str],
     records: list[dict[str, Any]],
     generated_images: list[tuple[BenchmarkSample, np.ndarray]],
+    store_record: bool = True,
+    store_generated: bool = True,
+    incremental_generated_dir: Path | None = None,
+    incremental_manifest: dict[str, dict[str, Any]] | None = None,
+    incremental_model_id: str | None = None,
+    incremental_run_id: str | None = None,
+    max_incremental_images: int | None = None,
 ) -> None:
     latencies.append(latency)
     warnings.extend(result.warnings)
-    records.append(
-        {
-            "sample_id": sample.sample_id,
-            "input_image": sample.input_image,
-            "output_image": result.image,
-            "target_image": sample.target_image,
-        }
-    )
-    generated_images.append((sample, result.image))
+    if store_record:
+        records.append(
+            {
+                "sample_id": sample.sample_id,
+                "input_image": sample.input_image,
+                "output_image": result.image,
+                "target_image": sample.target_image,
+            }
+        )
+    if store_generated:
+        generated_images.append((sample, result.image))
+    if (
+        incremental_generated_dir is not None
+        and incremental_manifest is not None
+        and incremental_model_id is not None
+        and (
+            max_incremental_images is None
+            or len(incremental_manifest) < max_incremental_images
+        )
+    ):
+        _save_generated_image(
+            model_dir=incremental_generated_dir,
+            manifest=incremental_manifest,
+            sample=sample,
+            image=result.image,
+            model_id=incremental_model_id,
+            run_id=incremental_run_id,
+        )
 
 
 def _sample_with_reference_metadata(
@@ -450,6 +646,29 @@ def _log_metric_summary(model_id: str, metric_reports: dict[str, MetricReport]) 
     LOGGER.info("Metrics for %s: %s", model_id, "; ".join(parts))
 
 
+def _build_metric_reports(
+    *,
+    benchmark_config: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> dict[str, MetricReport]:
+    metric_reports: dict[str, MetricReport] = {}
+    for metric_name in benchmark_config["metrics"]["enabled"]:
+        metric_spec = METRIC_SPECS.get(str(metric_name))
+        if metric_spec is None:
+            metric_reports[str(metric_name)] = MetricReport(
+                status="skipped",
+                sample_count=0,
+                reason="Metric is not registered.",
+            )
+            continue
+        metric_reports[str(metric_name)] = _build_metric_report(
+            metric_spec=metric_spec,
+            benchmark_config=benchmark_config,
+            records=records,
+        )
+    return metric_reports
+
+
 def _build_metric_report(
     *,
     metric_spec: MetricSpec,
@@ -525,8 +744,10 @@ def _run_single_model(
     model_config: dict[str, Any],
     samples: list[BenchmarkSample],
     report_dir: Path,
+    run_id: str = "manual",
 ) -> ModelReport:
     model = create_model_from_config(model_config, project_root=project_root)
+    benchmark_mode = str(benchmark_config.get("mode", "full"))
     per_sample_logging = bool(benchmark_config["logging"]["per_sample"])
     batch_size = int(benchmark_config["runtime"].get("batch_size", 1))
     reference_config = dict(benchmark_config.get("reference") or {})
@@ -541,6 +762,33 @@ def _run_single_model(
     poll_interval_seconds = float(
         benchmark_config["runtime"]["resource_poll_interval_seconds"]
     )
+    max_saved_images = int(benchmark_config["report"]["max_saved_images"])
+    should_save_images = (
+        bool(benchmark_config["report"]["save_images"])
+        or benchmark_mode == "images_only"
+    )
+    incremental_generated_dir: Path | None = None
+    incremental_manifest: dict[str, dict[str, Any]] | None = None
+    if benchmark_mode == "images_only" and should_save_images:
+        generated_root = report_dir / str(
+            benchmark_config["report"]["generated_dir_name"]
+        )
+        incremental_generated_dir = _prepare_generated_model_dir(
+            output_dir=generated_root,
+            model_id=str(model.model_id),
+            run_id=run_id,
+        )
+        incremental_manifest = {}
+
+    success_record_options = {
+        "store_record": benchmark_mode != "images_only",
+        "store_generated": benchmark_mode != "images_only",
+        "incremental_generated_dir": incremental_generated_dir,
+        "incremental_manifest": incremental_manifest,
+        "incremental_model_id": str(model.model_id),
+        "incremental_run_id": run_id,
+        "max_incremental_images": max_saved_images,
+    }
 
     model_start = time.perf_counter()
     monitor = ResourceMonitor(poll_interval_seconds) if collect_resources else None
@@ -616,6 +864,7 @@ def _run_single_model(
                         warnings=warnings,
                         records=records,
                         generated_images=generated_images,
+                        **success_record_options,
                     )
                     reference_state[title] = (
                         result.image,
@@ -717,6 +966,7 @@ def _run_single_model(
                             warnings=warnings,
                             records=records,
                             generated_images=generated_images,
+                            **success_record_options,
                         )
                     continue
 
@@ -754,6 +1004,7 @@ def _run_single_model(
                         warnings=warnings,
                         records=records,
                         generated_images=generated_images,
+                        **success_record_options,
                     )
     except Exception as exc:
         LOGGER.error(
@@ -809,33 +1060,36 @@ def _run_single_model(
     runtime_seconds = time.perf_counter() - model_start
     usage = monitor.snapshot() if monitor is not None else None
 
-    if bool(benchmark_config["report"]["save_images"]):
+    if incremental_generated_dir is not None and incremental_manifest is not None:
+        _write_generated_manifest(incremental_generated_dir, incremental_manifest)
+
+    if should_save_images and benchmark_mode != "images_only":
         generated_root = report_dir / str(
             benchmark_config["report"]["generated_dir_name"]
         )
         _save_generated_images(
             output_dir=generated_root,
             model_id=model.model_id,
+            run_id=run_id,
             generated_images=generated_images,
-            max_saved_images=int(benchmark_config["report"]["max_saved_images"]),
+            max_saved_images=max_saved_images,
         )
 
-    metric_reports: dict[str, MetricReport] = {}
-    for metric_name in benchmark_config["metrics"]["enabled"]:
-        metric_spec = METRIC_SPECS.get(str(metric_name))
-        if metric_spec is None:
-            metric_reports[str(metric_name)] = MetricReport(
+    if benchmark_mode == "images_only":
+        metric_reports = {
+            str(metric_name): MetricReport(
                 status="skipped",
                 sample_count=0,
-                reason="Metric is not registered.",
+                reason="Benchmark mode images_only skips metric computation.",
             )
-            continue
-        metric_reports[str(metric_name)] = _build_metric_report(
-            metric_spec=metric_spec,
+            for metric_name in benchmark_config["metrics"]["enabled"]
+        }
+    else:
+        metric_reports = _build_metric_reports(
             benchmark_config=benchmark_config,
             records=records,
         )
-    _log_metric_summary(model.model_id, metric_reports)
+        _log_metric_summary(model.model_id, metric_reports)
 
     success_count = len(records)
     total_samples = len(samples)
@@ -874,6 +1128,68 @@ def _run_single_model(
         counts=counts,
         failures=failures,
         warnings=deduped_warnings,
+    )
+
+
+def _run_metrics_from_generated_images(
+    *,
+    benchmark_config: dict[str, Any],
+    model_config: dict[str, Any],
+    samples: list[BenchmarkSample],
+    report_dir: Path,
+    run_id: str | None,
+) -> ModelReport:
+    model_id = str(model_config["model_id"])
+    generated_root = report_dir / str(benchmark_config["report"]["generated_dir_name"])
+    LOGGER.info(
+        "Computing metrics for model %s from generated images in %s",
+        model_id,
+        generated_root / model_id,
+    )
+    started = time.perf_counter()
+    records, failures = _load_generated_records(
+        generated_root=generated_root,
+        model_id=model_id,
+        run_id=run_id,
+        samples=samples,
+    )
+    metric_reports = _build_metric_reports(
+        benchmark_config=benchmark_config,
+        records=records,
+    )
+    _log_metric_summary(model_id, metric_reports)
+    runtime_seconds = time.perf_counter() - started
+    success_count = len(records)
+    total_samples = len(samples)
+
+    return ModelReport(
+        model_id=model_id,
+        metrics=metric_reports,
+        performance={
+            "total_runtime_seconds": runtime_seconds,
+            "mean_latency_seconds": None,
+            "median_latency_seconds": None,
+            "p95_latency_seconds": None,
+            "throughput_images_per_second": (
+                float(success_count / runtime_seconds)
+                if runtime_seconds > 0.0
+                else None
+            ),
+        },
+        resources={
+            "peak_cpu_rss_bytes": None,
+            "peak_gpu_memory_bytes": None,
+        },
+        counts={
+            "total_samples": total_samples,
+            "successful_samples": success_count,
+            "failed_samples": total_samples - success_count,
+            "samples_with_ground_truth": sum(
+                1 for sample in samples if sample.target_image is not None
+            ),
+        },
+        failures=failures,
+        warnings=[],
     )
 
 
@@ -965,6 +1281,9 @@ def run_benchmark(
 ) -> dict[str, object]:
     config_dict = to_plain_mapping(config)
     benchmark_config = to_plain_mapping(config_dict["benchmark"])
+    benchmark_mode = str(benchmark_config.get("mode", "full"))
+    if benchmark_mode not in {"full", "images_only", "metrics_only"}:
+        raise ValueError(f"Unsupported benchmark mode: {benchmark_mode}")
     _configure_logging(benchmark_config)
     _configure_warning_filters(benchmark_config)
     model_configs = resolve_model_configs(
@@ -972,7 +1291,8 @@ def run_benchmark(
         selected_models=list(benchmark_config.get("selected_models") or []),
     )
     LOGGER.info(
-        "Starting benchmark for models: %s",
+        "Starting benchmark mode=%s for models: %s",
+        benchmark_mode,
         ", ".join(str(model_cfg["model_id"]) for model_cfg in model_configs),
     )
     benchmark_dataset = load_benchmark_dataset_with_metadata(
@@ -994,25 +1314,39 @@ def run_benchmark(
     if output_dir is None:
         raise ValueError("Benchmark output directory must not be null.")
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    model_reports = [
-        _run_single_model(
-            project_root=project_root,
-            benchmark_config=benchmark_config,
-            model_config=model_config,
-            samples=samples,
-            report_dir=output_dir,
-        )
-        for model_config in model_configs
-    ]
-
     run_id = _benchmark_run_id(benchmark_config)
+
+    if benchmark_mode == "metrics_only":
+        model_reports = [
+            _run_metrics_from_generated_images(
+                benchmark_config=benchmark_config,
+                model_config=model_config,
+                samples=samples,
+                report_dir=output_dir,
+                run_id=run_id if benchmark_config["report"].get("run_id") else None,
+            )
+            for model_config in model_configs
+        ]
+    else:
+        model_reports = [
+            _run_single_model(
+                project_root=project_root,
+                benchmark_config=benchmark_config,
+                model_config=model_config,
+                samples=samples,
+                report_dir=output_dir,
+                run_id=run_id,
+            )
+            for model_config in model_configs
+        ]
+
     dataset_report = {
         "source": benchmark_config["dataset"]["source"],
         "sample_count": len(samples),
         "samples_with_ground_truth": sum(
             1 for sample in samples if sample.target_image is not None
         ),
+        "benchmark_mode": benchmark_mode,
         "run_id": run_id,
         **benchmark_dataset.metadata,
     }

@@ -6,6 +6,8 @@ dataset:
   reference_dir: null
   limit: 8
 
+mode: full
+
 reference:
   mode: none
   group_key: title

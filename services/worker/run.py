@@ -1,6 +1,10 @@
+from __future__ import annotations
+
+import asyncio
 import logging
 
 from services.api.app.core.config import load_settings
+from services.worker.app import ColorizationWorker
 
 
 def main() -> None:
@@ -9,15 +13,8 @@ def main() -> None:
         level=settings.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    import uvicorn
-
-    uvicorn.run(
-        "services.api.app.main:app",
-        host=settings.host,
-        port=settings.port,
-        log_level=settings.log_level,
-        log_config=None,
-    )
+    worker = ColorizationWorker.from_settings(settings)
+    asyncio.run(worker.run_forever())
 
 
 if __name__ == "__main__":
