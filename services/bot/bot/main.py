@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import io
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,6 +14,7 @@ from aiogram.filters.command import CommandObject
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -32,6 +34,36 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_MAX_IMAGE_BYTES = 10_485_760
 DEFAULT_MAX_IMAGE_SIDE = 4096
 MODEL_CALLBACK_PREFIX = "select_model:"
+HELP_COMPARISON_PANEL_PATH = (
+    Path(__file__).resolve().parent / "assets" / "comparison_panel_71.png"
+)
+START_TEXT = (
+    "Illustration Autocolorizer - бот для автоматической колоризации иллюстраций.\n\n"
+    "Как работает обработка:\n"
+    "1. Выберите модель через /models.\n"
+    "2. Для reference-моделей сохраните опорное изображение через /set_reference.\n"
+    "3. Отправьте /colorize вместе с изображением или ответьте /colorize "
+    "на картинку.\n\n"
+    "Задача попадет в очередь, worker выполнит колоризацию, а результат придет "
+    "автоматически в этот чат. Текущие параметры можно посмотреть через /settings."
+)
+HELP_TEXT = (
+    "Команды:\n"
+    "/start - краткое описание бота и сценария работы\n"
+    "/help - показать эту справку\n"
+    "/settings - показать текущие настройки пользователя\n"
+    "/models - показать доступные модели и выбрать модель кнопкой\n"
+    "/model - то же самое, что /models\n"
+    "/set_settings <param> <value> - изменить настройку вручную\n"
+    "/set_reference + изображение - сохранить reference image для reference-моделей\n"
+    "/colorize + изображение - поставить изображение в очередь на колоризацию\n\n"
+    "Примеры:\n"
+    "/set_settings seed 1\n"
+    "/set_settings size 576\n"
+    "/set_settings seed clear\n\n"
+    "Поддерживаемые настройки: model_id, seed и параметры модели в options. "
+    "Для выбора модели удобнее использовать /models."
+)
 
 
 async def _download_photo_from_message(message: Message, bot: Bot) -> bytes | None:
@@ -151,6 +183,19 @@ def _log_command(message: Message, command: str) -> None:
     )
 
 
+async def _send_help_comparison_panel(message: Message) -> None:
+    if not HELP_COMPARISON_PANEL_PATH.exists():
+        LOGGER.warning(
+            "telegram help comparison panel not found path=%s",
+            HELP_COMPARISON_PANEL_PATH,
+        )
+        return
+    await message.answer_photo(
+        FSInputFile(HELP_COMPARISON_PANEL_PATH),
+        caption="Model comparison panel: sample 71.",
+    )
+
+
 def _format_settings(settings: UserSettings) -> str:
     reference_status = (
         "задан" if settings.reference_image is not None else "не задан"
@@ -236,23 +281,13 @@ def create_router(
     @router.message(Command("start"))
     async def start(message: Message) -> None:
         _log_command(message, "start")
-        await message.answer(
-            "Отправьте /colorize с изображением, чтобы поставить задачу "
-            "колоризации в очередь. Результат придет автоматически."
-        )
+        await message.answer(START_TEXT)
 
     @router.message(Command("help"))
     async def help_message(message: Message) -> None:
         _log_command(message, "help")
-        await message.answer(
-            "/settings - показать текущие настройки\n"
-            "/models - показать доступные модели и выбрать модель кнопкой\n"
-            "/set_settings <param> <value> - изменить настройку\n"
-            "/set_reference + изображение - сохранить reference image\n"
-            "/colorize + изображение - запустить колоризацию\n\n"
-            "Поддерживаемые настройки: model_id, seed и параметры модели "
-            "в options, например /set_settings size 576."
-        )
+        await message.answer(HELP_TEXT)
+        await _send_help_comparison_panel(message)
 
     @router.message(Command("settings"))
     async def settings(message: Message) -> None:

@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.api
       args:
-        EXTRA_UV_GROUPS: ${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
+        EXTRA_UV_GROUPS: ${API_EXTRA_UV_GROUPS:-}
     ports:
       - "8000:8000"
     volumes:
@@ -16,7 +16,7 @@ services:
       - COLORIZATION_MODEL_ID=${COLORIZATION_MODEL_ID:-ddcolor}
       - COLORIZATION_DEVICE=${COLORIZATION_DEVICE:-cpu}
       - ENABLED_MODELS=${ENABLED_MODELS:-cgan_reference,colorcomic_auto,ddcolor,deoldify}
-      - EXTRA_UV_GROUPS=${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
+      - EXTRA_UV_GROUPS=${API_EXTRA_UV_GROUPS:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -37,7 +37,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
       args:
-        EXTRA_UV_GROUPS: ${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
+        EXTRA_UV_GROUPS: ${WORKER_EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
     volumes:
       - ./data:/app/data
       - ./outputs/service:/app/outputs/service
@@ -47,7 +47,7 @@ services:
       - COLORIZATION_MODEL_ID=${COLORIZATION_MODEL_ID:-ddcolor}
       - COLORIZATION_DEVICE=${COLORIZATION_DEVICE:-cpu}
       - ENABLED_MODELS=${ENABLED_MODELS:-cgan_reference,colorcomic_auto,ddcolor,deoldify}
-      - EXTRA_UV_GROUPS=${EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
+      - EXTRA_UV_GROUPS=${WORKER_EXTRA_UV_GROUPS:---group model-cgan --group model-colorcomic --group model-ddcolor --group model-deoldify}
     depends_on:
       redis:
         condition: service_healthy

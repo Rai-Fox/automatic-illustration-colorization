@@ -2,12 +2,18 @@
 .venv
 .pytest_cache
 .ruff_cache
+.mypy_cache
 __pycache__
 *.pyc
+*.pyo
+*.ipynb
 
 data
 outputs
 notebooks
+tests
+htmlcov
+.coverage
 
 .env
 .env.*

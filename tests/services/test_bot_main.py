@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from io import BytesIO
 
 from PIL import Image
 
 from services.bot.bot.main import (
+    HELP_COMPARISON_PANEL_PATH,
+    HELP_TEXT,
     MODEL_CALLBACK_PREFIX,
+    START_TEXT,
     _build_model_keyboard,
     _enabled_models,
     _format_models_list,
+    _send_help_comparison_panel,
     _validate_image_upload,
 )
 
@@ -93,3 +98,45 @@ def test_model_list_and_keyboard_mark_current_and_reference_models() -> None:
     assert keyboard.inline_keyboard[1][0].callback_data == (
         f"{MODEL_CALLBACK_PREFIX}ddcolor"
     )
+
+
+def test_start_text_describes_async_colorization_flow() -> None:
+    assert "Illustration Autocolorizer" in START_TEXT
+    assert "/models" in START_TEXT
+    assert "/set_reference" in START_TEXT
+    assert "/colorize" in START_TEXT
+    assert "worker" in START_TEXT
+    assert "автоматически" in START_TEXT
+
+
+def test_help_text_contains_all_current_commands() -> None:
+    for command in (
+        "/start",
+        "/help",
+        "/settings",
+        "/models",
+        "/model",
+        "/set_settings <param> <value>",
+        "/set_reference",
+        "/colorize",
+    ):
+        assert command in HELP_TEXT
+
+
+def test_help_comparison_panel_asset_is_sent() -> None:
+    class FakeMessage:
+        def __init__(self) -> None:
+            self.photo = None
+            self.caption = None
+
+        async def answer_photo(self, photo, caption: str | None = None) -> None:
+            self.photo = photo
+            self.caption = caption
+
+    message = FakeMessage()
+
+    assert HELP_COMPARISON_PANEL_PATH.exists()
+    asyncio.run(_send_help_comparison_panel(message))  # type: ignore[arg-type]
+
+    assert str(message.photo.path) == str(HELP_COMPARISON_PANEL_PATH)
+    assert message.caption == "Model comparison panel: sample 71."

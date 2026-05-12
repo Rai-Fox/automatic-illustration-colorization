@@ -23,7 +23,7 @@ Options:
   --device VALUE              cpu, cuda, or auto. Default: cpu.
   --enabled-models VALUE      Comma-separated enabled models.
                               Default: cgan_reference,colorcomic_auto,ddcolor,deoldify.
-  --extra-uv-groups VALUE     Additional uv groups for Docker build.
+  --extra-uv-groups VALUE     Additional uv groups for worker Docker build.
   -h, --help                  Show this help.
 USAGE
 }
@@ -175,7 +175,10 @@ fi
 export COLORIZATION_MODEL_ID="$model_id"
 export COLORIZATION_DEVICE="$device"
 export ENABLED_MODELS="$enabled_models"
-export EXTRA_UV_GROUPS="${resolved_groups[*]}"
+export API_EXTRA_UV_GROUPS=""
+export WORKER_EXTRA_UV_GROUPS="${resolved_groups[*]}"
+# Kept for manual commands that still read the old variable name.
+export EXTRA_UV_GROUPS="$WORKER_EXTRA_UV_GROUPS"
 
 mkdir -p data outputs/service
 
@@ -198,8 +201,11 @@ docker compose config >/dev/null
 
 echo "Starting services: ${services[*]}"
 echo "Model: $model_id; device: $device; enabled models: $enabled_models"
-if [[ -n "$EXTRA_UV_GROUPS" ]]; then
-  echo "Extra uv groups: $EXTRA_UV_GROUPS"
+if [[ -n "$API_EXTRA_UV_GROUPS" ]]; then
+  echo "API uv groups: $API_EXTRA_UV_GROUPS"
+fi
+if [[ -n "$WORKER_EXTRA_UV_GROUPS" ]]; then
+  echo "Worker uv groups: $WORKER_EXTRA_UV_GROUPS"
 fi
 
 if [[ "$no_build" -eq 0 ]]; then

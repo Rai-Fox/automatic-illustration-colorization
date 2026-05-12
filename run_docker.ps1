@@ -123,7 +123,10 @@ if (-not [string]::IsNullOrWhiteSpace($ExtraUvGroups)) {
 $env:COLORIZATION_MODEL_ID = $ModelId
 $env:COLORIZATION_DEVICE = $Device
 $env:ENABLED_MODELS = $EnabledModels
-$env:EXTRA_UV_GROUPS = ($resolvedExtraGroups -join " ").Trim()
+$env:API_EXTRA_UV_GROUPS = ""
+$env:WORKER_EXTRA_UV_GROUPS = ($resolvedExtraGroups -join " ").Trim()
+# Kept for manual commands that still read the old variable name.
+$env:EXTRA_UV_GROUPS = $env:WORKER_EXTRA_UV_GROUPS
 
 New-Item -ItemType Directory -Force -Path "data", "outputs/service" | Out-Null
 
@@ -153,8 +156,11 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Starting services: $($services -join ', ')"
 Write-Host "Model: $ModelId; device: $Device; enabled models: $EnabledModels"
-if (-not [string]::IsNullOrWhiteSpace($env:EXTRA_UV_GROUPS)) {
-    Write-Host "Extra uv groups: $env:EXTRA_UV_GROUPS"
+if (-not [string]::IsNullOrWhiteSpace($env:API_EXTRA_UV_GROUPS)) {
+    Write-Host "API uv groups: $env:API_EXTRA_UV_GROUPS"
+}
+if (-not [string]::IsNullOrWhiteSpace($env:WORKER_EXTRA_UV_GROUPS)) {
+    Write-Host "Worker uv groups: $env:WORKER_EXTRA_UV_GROUPS"
 }
 
 if (-not $NoBuild) {
