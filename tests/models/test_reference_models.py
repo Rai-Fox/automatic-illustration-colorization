@@ -31,6 +31,6 @@ def test_cobra_requires_multiple_reference_list() -> None:
     model = CobraModel({"model_id": "cobra"})
 
     with pytest.raises(MissingReferenceImageError):
-        model.require_references(
+        model.get_references(
             ColorizationRequest(input_image=np.zeros((4, 4, 3), dtype=np.uint8))
         )

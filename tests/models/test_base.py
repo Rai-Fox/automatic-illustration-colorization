@@ -31,7 +31,7 @@ def test_require_reference_raises_custom_error() -> None:
     model = PassthroughColorizationModel({"model_id": "passthrough"})
 
     with pytest.raises(MissingReferenceImageError):
-        model.require_reference(ColorizationRequest(input_image=np.zeros((2, 2, 3))))
+        model.get_reference(ColorizationRequest(input_image=np.zeros((2, 2, 3))))
 
 
 def test_passthrough_returns_rgb_uint8_result() -> None:

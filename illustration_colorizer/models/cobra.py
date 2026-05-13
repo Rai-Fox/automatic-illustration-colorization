@@ -424,7 +424,7 @@ class CobraModel(ColorizationModel):
         return Image.fromarray(np.clip(output, 0, 255).astype(np.uint8)).convert("RGB")
 
     def colorize(self, request: ColorizationRequest) -> ColorizationResult:
-        references = self.require_references(request)
+        references = self.get_references(request)
         torch = require_loaded(self._torch, self.model_id)
         transforms = require_loaded(self._transforms, self.model_id)
         pipeline = require_loaded(self._pipeline, self.model_id)

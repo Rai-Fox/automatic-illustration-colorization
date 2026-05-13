@@ -68,7 +68,7 @@ class ColorizationModel(ABC):
     def supports_cpu(self) -> bool:
         return bool(self.config.get("supports_cpu", True))
 
-    def require_reference(self, request: ColorizationRequest) -> np.ndarray:
+    def get_reference(self, request: ColorizationRequest) -> np.ndarray:
         if request.reference_image is not None:
             return request.reference_image
         if request.reference_images:
@@ -77,7 +77,7 @@ class ColorizationModel(ABC):
             f"{self.model_id} requires reference_image or reference_images."
         )
 
-    def require_references(self, request: ColorizationRequest) -> list[np.ndarray]:
+    def get_references(self, request: ColorizationRequest) -> list[np.ndarray]:
         references = list(request.reference_images)
         if request.reference_image is not None:
             references.insert(0, request.reference_image)

@@ -214,7 +214,7 @@ class ColorComicReferenceModel(ColorizationModel):
 
     def colorize(self, request: ColorizationRequest) -> ColorizationResult:
         colorizer = require_loaded(self._colorizer, self.model_id)
-        reference = self.require_reference(request)
+        reference = self.get_reference(request)
         size = int(request.options.get("size", self.config.get("size", 512)))
         start_time = time.perf_counter()
         output_bgr = colorizer.colorize(

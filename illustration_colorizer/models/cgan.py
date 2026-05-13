@@ -144,7 +144,7 @@ class ExampleBasedMangaCganModel(ColorizationModel):
         color_unet = require_loaded(self._color_unet, self.model_id)
         torch = require_loaded(self._torch, self.model_id)
         functional = require_loaded(self._functional, self.model_id)
-        reference = self.require_reference(request)
+        reference = self.get_reference(request)
         img_size = int(request_option(request, "size", self.config.get("size", 256)))
 
         input_rgb = rgb_uint8(request.input_image)
