@@ -20,7 +20,9 @@ metrics:
     - ink_preservation_score
     - lpips
     - kid
+  batch_size: 32
   kid_subset_size: 50
+  kid_batch_size: 32
   lpips_net: alex
   lpips_batch_size: 8
 

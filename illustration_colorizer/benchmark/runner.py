@@ -4,7 +4,7 @@ import logging
 import statistics
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -93,6 +93,12 @@ METRIC_SPECS: dict[str, MetricSpec] = {
         factory=lambda cfg: KidMetric(
             device=str(cfg["runtime"]["device"]),
             kid_subset_size=int(cfg["metrics"]["kid_subset_size"]),
+            batch_size=int(
+                cfg["metrics"].get(
+                    "kid_batch_size",
+                    cfg["metrics"].get("lpips_batch_size", 8),
+                )
+            ),
         ),
     ),
     "line_preservation_score": MetricSpec(
@@ -373,6 +379,31 @@ def _generated_model_dir(
     return max(run_dirs, key=lambda path: (path / "manifest.json").stat().st_mtime)
 
 
+def _load_generated_manifest(
+    *,
+    generated_root: Path,
+    model_id: str,
+    run_id: str | None,
+) -> tuple[Path, Path, dict[str, Any] | None, list[SampleFailure]]:
+    model_dir = _generated_model_dir(
+        generated_root=generated_root,
+        model_id=model_id,
+        run_id=run_id,
+    )
+    manifest_path = model_dir / "manifest.json"
+    if not manifest_path.exists():
+        return model_dir, manifest_path, None, [
+            SampleFailure(
+                sample_id="__model__",
+                error_type="FileNotFoundError",
+                message=f"Manifest not found: {manifest_path}",
+            )
+        ]
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return model_dir, manifest_path, manifest, []
+
+
 def _resize_for_panel(
     image: np.ndarray,
     *,
@@ -422,6 +453,57 @@ def _extract_result_from_panel(
     return result_panel
 
 
+def _load_generated_record(
+    *,
+    model_dir: Path,
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    sample: BenchmarkSample,
+) -> tuple[dict[str, Any] | None, SampleFailure | None]:
+    sample_id = str(sample.sample_id)
+    if sample_id not in manifest:
+        return None, SampleFailure(
+            sample_id=sample_id,
+            error_type="FileNotFoundError",
+            message=f"Sample {sample_id} is absent from {manifest_path}",
+        )
+
+    panel_path = model_dir / f"{sample_id}.png"
+    if not panel_path.exists():
+        return None, SampleFailure(
+            sample_id=sample_id,
+            error_type="FileNotFoundError",
+            message=f"Generated panel not found: {panel_path}",
+        )
+
+    try:
+        saved_image = np.asarray(Image.open(panel_path).convert("RGB"))
+        metadata = manifest[sample_id]
+        if metadata.get("format") == "result":
+            input_image = to_rgb_uint8(sample.input_image)
+            height, width = input_image.shape[:2]
+            output_image = _resize_for_panel(
+                saved_image,
+                width=width,
+                height=height,
+            )
+        else:
+            output_image = _extract_result_from_panel(saved_image, sample)
+    except Exception as exc:
+        return None, SampleFailure(
+            sample_id=sample_id,
+            error_type=type(exc).__name__,
+            message=str(exc),
+        )
+
+    return {
+        "sample_id": sample.sample_id,
+        "input_image": sample.input_image,
+        "output_image": output_image,
+        "target_image": sample.target_image,
+    }, None
+
+
 def _load_generated_records(
     *,
     generated_root: Path,
@@ -429,78 +511,27 @@ def _load_generated_records(
     run_id: str | None,
     samples: list[BenchmarkSample],
 ) -> tuple[list[dict[str, Any]], list[SampleFailure]]:
-    model_dir = _generated_model_dir(
+    model_dir, manifest_path, manifest, failures = _load_generated_manifest(
         generated_root=generated_root,
         model_id=model_id,
         run_id=run_id,
     )
-    manifest_path = model_dir / "manifest.json"
-    if not manifest_path.exists():
-        return [], [
-            SampleFailure(
-                sample_id="__model__",
-                error_type="FileNotFoundError",
-                message=f"Manifest not found: {manifest_path}",
-            )
-        ]
+    if manifest is None:
+        return [], failures
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     records: list[dict[str, Any]] = []
-    failures: list[SampleFailure] = []
     for sample in samples:
-        sample_id = str(sample.sample_id)
-        if sample_id not in manifest:
-            failures.append(
-                SampleFailure(
-                    sample_id=sample_id,
-                    error_type="FileNotFoundError",
-                    message=f"Sample {sample_id} is absent from {manifest_path}",
-                )
-            )
-            continue
-
-        panel_path = model_dir / f"{sample_id}.png"
-        if not panel_path.exists():
-            failures.append(
-                SampleFailure(
-                    sample_id=sample_id,
-                    error_type="FileNotFoundError",
-                    message=f"Generated panel not found: {panel_path}",
-                )
-            )
-            continue
-
-        try:
-            saved_image = np.asarray(Image.open(panel_path).convert("RGB"))
-            metadata = manifest[sample_id]
-            if metadata.get("format") == "result":
-                input_image = to_rgb_uint8(sample.input_image)
-                height, width = input_image.shape[:2]
-                output_image = _resize_for_panel(
-                    saved_image,
-                    width=width,
-                    height=height,
-                )
-            else:
-                output_image = _extract_result_from_panel(saved_image, sample)
-        except Exception as exc:
-            failures.append(
-                SampleFailure(
-                    sample_id=sample_id,
-                    error_type=type(exc).__name__,
-                    message=str(exc),
-                )
-            )
-            continue
-
-        records.append(
-            {
-                "sample_id": sample.sample_id,
-                "input_image": sample.input_image,
-                "output_image": output_image,
-                "target_image": sample.target_image,
-            }
+        record, failure = _load_generated_record(
+            model_dir=model_dir,
+            manifest_path=manifest_path,
+            manifest=manifest,
+            sample=sample,
         )
+        if failure is not None:
+            failures.append(failure)
+            continue
+        if record is not None:
+            records.append(record)
 
     return records, failures
 
@@ -651,90 +682,345 @@ def _build_metric_reports(
     benchmark_config: dict[str, Any],
     records: list[dict[str, Any]],
 ) -> dict[str, MetricReport]:
+    batch_size = _metric_record_batch_size(benchmark_config)
+
+    def expected_count(metric: BenchmarkMetric) -> int:
+        return _metric_sample_count(records, metric)
+
+    return _build_metric_reports_from_record_batches(
+        benchmark_config=benchmark_config,
+        record_batches=_chunked(records, batch_size),
+        expected_count=expected_count,
+    )
+
+
+def _metric_record_batch_size(benchmark_config: dict[str, Any]) -> int:
+    metrics_config = benchmark_config.get("metrics") or {}
+    runtime_config = benchmark_config.get("runtime") or {}
+    value = metrics_config.get("batch_size", runtime_config.get("batch_size", 1))
+    return max(1, int(value))
+
+
+def _metric_records(
+    records: list[dict[str, Any]],
+    metric: BenchmarkMetric,
+) -> list[dict[str, Any]]:
+    if metric.requires_ground_truth:
+        return [record for record in records if record["target_image"] is not None]
+    return records
+
+
+def _metric_sample_count(
+    records: list[dict[str, Any]],
+    metric: BenchmarkMetric,
+) -> int:
+    return len(_metric_records(records, metric))
+
+
+def _no_metric_records_reason(metric: BenchmarkMetric) -> str:
+    if metric.requires_ground_truth:
+        return "Ground truth is not available for this metric."
+    return "No successful samples available for this metric."
+
+
+def _compute_metric_on_records(
+    *,
+    records: list[dict[str, Any]],
+    metric: BenchmarkMetric,
+) -> Any:
+    x_images = [record["input_image"] for record in records]
+    y_images = [record["output_image"] for record in records]
+    if metric.requires_ground_truth:
+        g_images = [record["target_image"] for record in records]
+        return metric.compute(
+            x_images=x_images,
+            y_images=y_images,
+            g_images=g_images,
+        )
+    return metric.compute(
+        x_images=x_images,
+        y_images=y_images,
+        g_images=None,
+    )
+
+
+@dataclass
+class _MeanMetricAccumulator:
+    metric: BenchmarkMetric
+    expected_sample_count: int
+    weighted_sum: float = 0.0
+    sample_count: int = 0
+    error: str | None = None
+
+    def update(self, records: list[dict[str, Any]]) -> None:
+        if self.error is not None:
+            return
+        metric_records = _metric_records(records, self.metric)
+        if not metric_records:
+            return
+        try:
+            value = _compute_metric_on_records(
+                records=metric_records,
+                metric=self.metric,
+            )
+        except (ImportError, ValueError) as exc:
+            self.error = str(exc)
+            return
+        if isinstance(value, dict):
+            self.error = "Metric returned a non-scalar value."
+            return
+        self.weighted_sum += float(value) * len(metric_records)
+        self.sample_count += len(metric_records)
+
+    def report(self) -> MetricReport:
+        if self.error is not None:
+            return MetricReport(
+                status="skipped",
+                sample_count=self.expected_sample_count,
+                reason=self.error,
+            )
+        if self.sample_count == 0:
+            return MetricReport(
+                status="skipped",
+                sample_count=0,
+                reason=_no_metric_records_reason(self.metric),
+            )
+        return MetricReport(
+            status="computed",
+            sample_count=self.sample_count,
+            value=_serialize_metric_value(self.weighted_sum / self.sample_count),
+        )
+
+
+@dataclass
+class _KidMetricAccumulator:
+    metric: KidMetric
+    expected_sample_count: int
+    sample_count: int = 0
+    max_sample_count: int = 0
+    error: str | None = None
+    state: Any = None
+
+    def __post_init__(self) -> None:
+        if self.expected_sample_count <= 0:
+            return
+        try:
+            self.max_sample_count = self.metric.effective_sample_count(
+                self.expected_sample_count,
+            )
+            self.state = self.metric.create_state(
+                expected_sample_count=self.expected_sample_count,
+            )
+        except (ImportError, ValueError) as exc:
+            self.error = str(exc)
+
+    def update(self, records: list[dict[str, Any]]) -> None:
+        if self.error is not None or self.state is None:
+            return
+        if self.sample_count >= self.max_sample_count:
+            return
+        metric_records = _metric_records(records, self.metric)
+        if not metric_records:
+            return
+        remaining = self.max_sample_count - self.sample_count
+        metric_records = metric_records[:remaining]
+        y_images = [record["output_image"] for record in metric_records]
+        g_images = [record["target_image"] for record in metric_records]
+        try:
+            self.metric.update_state(
+                self.state,
+                y_images=y_images,
+                g_images=g_images,
+            )
+        except (ImportError, ValueError) as exc:
+            self.error = str(exc)
+            return
+        self.sample_count += len(metric_records)
+
+    def report(self) -> MetricReport:
+        if self.error is not None:
+            return MetricReport(
+                status="skipped",
+                sample_count=self.expected_sample_count,
+                reason=self.error,
+            )
+        if self.sample_count == 0:
+            return MetricReport(
+                status="skipped",
+                sample_count=0,
+                reason=_no_metric_records_reason(self.metric),
+            )
+        try:
+            value = self.metric.compute_state(self.state)
+        except (ImportError, ValueError) as exc:
+            return MetricReport(
+                status="skipped",
+                sample_count=self.sample_count,
+                reason=str(exc),
+            )
+        return MetricReport(
+            status="computed",
+            sample_count=self.sample_count,
+            value=_serialize_metric_value(value),
+        )
+
+
+def _create_metric_accumulator(
+    *,
+    metric: BenchmarkMetric,
+    expected_sample_count: int,
+) -> _MeanMetricAccumulator | _KidMetricAccumulator:
+    if isinstance(metric, KidMetric):
+        return _KidMetricAccumulator(
+            metric=metric,
+            expected_sample_count=expected_sample_count,
+        )
+    return _MeanMetricAccumulator(
+        metric=metric,
+        expected_sample_count=expected_sample_count,
+    )
+
+
+def _build_metric_reports_from_record_batches(
+    *,
+    benchmark_config: dict[str, Any],
+    record_batches: Iterable[list[dict[str, Any]]],
+    expected_count: Callable[[BenchmarkMetric], int],
+) -> dict[str, MetricReport]:
     metric_reports: dict[str, MetricReport] = {}
+    accumulators: dict[str, _MeanMetricAccumulator | _KidMetricAccumulator] = {}
+
     for metric_name in benchmark_config["metrics"]["enabled"]:
-        metric_spec = METRIC_SPECS.get(str(metric_name))
+        metric_name_str = str(metric_name)
+        metric_spec = METRIC_SPECS.get(metric_name_str)
         if metric_spec is None:
-            metric_reports[str(metric_name)] = MetricReport(
+            metric_reports[metric_name_str] = MetricReport(
                 status="skipped",
                 sample_count=0,
                 reason="Metric is not registered.",
             )
             continue
-        metric_reports[str(metric_name)] = _build_metric_report(
-            metric_spec=metric_spec,
-            benchmark_config=benchmark_config,
-            records=records,
+
+        metric = metric_spec.factory(benchmark_config)
+        if not isinstance(metric, BenchmarkMetric):
+            raise TypeError(
+                f"Metric factory for {metric_spec.name} must return "
+                "BenchmarkMetric."
+            )
+        accumulators[metric_name_str] = _create_metric_accumulator(
+            metric=metric,
+            expected_sample_count=expected_count(metric),
         )
+
+    for record_batch in record_batches:
+        if not record_batch:
+            continue
+        for accumulator in accumulators.values():
+            accumulator.update(record_batch)
+
+    for metric_name in benchmark_config["metrics"]["enabled"]:
+        metric_name_str = str(metric_name)
+        if metric_name_str in metric_reports:
+            continue
+        metric_reports[metric_name_str] = accumulators[metric_name_str].report()
+
     return metric_reports
 
 
-def _build_metric_report(
+def _generated_metric_sample_count(
     *,
-    metric_spec: MetricSpec,
+    samples: list[BenchmarkSample],
+    model_dir: Path,
+    manifest: dict[str, Any],
+    metric: BenchmarkMetric,
+) -> int:
+    count = 0
+    for sample in samples:
+        if metric.requires_ground_truth and sample.target_image is None:
+            continue
+        sample_id = str(sample.sample_id)
+        if sample_id not in manifest:
+            continue
+        if not (model_dir / f"{sample_id}.png").exists():
+            continue
+        count += 1
+    return count
+
+
+def _build_metric_reports_from_generated_images(
+    *,
     benchmark_config: dict[str, Any],
-    records: list[dict[str, Any]],
-) -> MetricReport:
-    metric = metric_spec.factory(benchmark_config)
-    if not isinstance(metric, BenchmarkMetric):
-        raise TypeError(
-            f"Metric factory for {metric_spec.name} must return BenchmarkMetric."
-        )
-
-    if metric.requires_ground_truth:
-        metric_records = [
-            record for record in records if record["target_image"] is not None
-        ]
-        if not metric_records:
-            return MetricReport(
-                status="skipped",
-                sample_count=0,
-                reason="Ground truth is not available for this metric.",
-            )
-    else:
-        metric_records = records
-        if not metric_records:
-            return MetricReport(
-                status="skipped",
-                sample_count=0,
-                reason="No successful samples available for this metric.",
-            )
-
-    x_images = [record["input_image"] for record in metric_records]
-    y_images = [record["output_image"] for record in metric_records]
-    g_images = [record["target_image"] for record in metric_records]
-
-    try:
-        if metric.requires_ground_truth:
-            value = metric.compute(
-                x_images=x_images,
-                y_images=y_images,
-                g_images=g_images,
-            )
-        else:
-            value = metric.compute(
-                x_images=x_images,
-                y_images=y_images,
-                g_images=None,
-            )
-    except ImportError as exc:
-        return MetricReport(
-            status="skipped",
-            sample_count=len(metric_records),
-            reason=str(exc),
-        )
-    except ValueError as exc:
-        return MetricReport(
-            status="skipped",
-            sample_count=len(metric_records),
-            reason=str(exc),
-        )
-
-    return MetricReport(
-        status="computed",
-        sample_count=len(metric_records),
-        value=_serialize_metric_value(value),
+    generated_root: Path,
+    model_id: str,
+    run_id: str | None,
+    samples: list[BenchmarkSample],
+) -> tuple[dict[str, MetricReport], list[SampleFailure], int]:
+    model_dir, manifest_path, manifest, failures = _load_generated_manifest(
+        generated_root=generated_root,
+        model_id=model_id,
+        run_id=run_id,
     )
+    if manifest is None:
+        return (
+            _build_metric_reports(benchmark_config=benchmark_config, records=[]),
+            failures,
+            0,
+        )
+
+    batch_size = _metric_record_batch_size(benchmark_config)
+    success_count = 0
+
+    def expected_count(metric: BenchmarkMetric) -> int:
+        return _generated_metric_sample_count(
+            samples=samples,
+            model_dir=model_dir,
+            manifest=manifest,
+            metric=metric,
+        )
+
+    def record_batches() -> Iterable[list[dict[str, Any]]]:
+        nonlocal success_count
+        batch: list[dict[str, Any]] = []
+        for sample in samples:
+            record, failure = _load_generated_record(
+                model_dir=model_dir,
+                manifest_path=manifest_path,
+                manifest=manifest,
+                sample=sample,
+            )
+            if failure is not None:
+                failures.append(failure)
+                continue
+            if record is None:
+                continue
+
+            batch.append(record)
+            success_count += 1
+            if len(batch) >= batch_size:
+                LOGGER.info(
+                    "Computing metrics for %s from generated images: %d/%d",
+                    model_id,
+                    success_count,
+                    len(samples),
+                )
+                yield batch
+                batch = []
+
+        if batch:
+            LOGGER.info(
+                "Computing metrics for %s from generated images: %d/%d",
+                model_id,
+                success_count,
+                len(samples),
+            )
+            yield batch
+
+    metric_reports = _build_metric_reports_from_record_batches(
+        benchmark_config=benchmark_config,
+        record_batches=record_batches(),
+        expected_count=expected_count,
+    )
+    return metric_reports, failures, success_count
 
 
 def _run_single_model(
@@ -1147,19 +1433,17 @@ def _run_metrics_from_generated_images(
         generated_root / model_id,
     )
     started = time.perf_counter()
-    records, failures = _load_generated_records(
-        generated_root=generated_root,
-        model_id=model_id,
-        run_id=run_id,
-        samples=samples,
-    )
-    metric_reports = _build_metric_reports(
-        benchmark_config=benchmark_config,
-        records=records,
+    metric_reports, failures, success_count = (
+        _build_metric_reports_from_generated_images(
+            benchmark_config=benchmark_config,
+            generated_root=generated_root,
+            model_id=model_id,
+            run_id=run_id,
+            samples=samples,
+        )
     )
     _log_metric_summary(model_id, metric_reports)
     runtime_seconds = time.perf_counter() - started
-    success_count = len(records)
     total_samples = len(samples)
 
     return ModelReport(

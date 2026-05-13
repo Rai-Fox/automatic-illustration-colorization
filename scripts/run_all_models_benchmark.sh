@@ -11,6 +11,8 @@ BENCHMARK_MODE="${BENCHMARK_MODE:-full}"
 STAMP="${RUN_STAMP:-${RUN_NAME:-parameterized}}"
 LPIPS_BATCH_SIZE="${LPIPS_BATCH_SIZE:-32}"
 KID_SUBSET_SIZE="${KID_SUBSET_SIZE:-1000}"
+METRICS_BATCH_SIZE="${METRICS_BATCH_SIZE:-32}"
+KID_BATCH_SIZE="${KID_BATCH_SIZE:-${METRICS_BATCH_SIZE}}"
 
 FULL_METRICS="${FULL_METRICS:-colorfulness,line_preservation_score,ink_preservation_score,lpips,kid}"
 LIGHT_METRICS="${LIGHT_METRICS:-colorfulness,line_preservation_score,ink_preservation_score}"
@@ -29,6 +31,8 @@ run_model_script() {
   BENCHMARK_MODE="${BENCHMARK_MODE}" \
   LPIPS_BATCH_SIZE="${LPIPS_BATCH_SIZE}" \
   KID_SUBSET_SIZE="${KID_SUBSET_SIZE}" \
+  METRICS_BATCH_SIZE="${METRICS_BATCH_SIZE}" \
+  KID_BATCH_SIZE="${KID_BATCH_SIZE}" \
   FULL_METRICS="${FULL_METRICS}" \
   LIGHT_METRICS="${LIGHT_METRICS}" \
   REFERENCE_MODE="${REFERENCE_MODE:-}" \
@@ -68,6 +72,8 @@ echo "Device: ${DEVICE}"
 echo "Benchmark mode: ${BENCHMARK_MODE}"
 echo "LPIPS batch size: ${LPIPS_BATCH_SIZE}"
 echo "KID subset size: ${KID_SUBSET_SIZE}"
+echo "Metrics batch size: ${METRICS_BATCH_SIZE}"
+echo "KID batch size: ${KID_BATCH_SIZE}"
 
 # Automatic colorization models. Full metrics are reasonable here.
 run_model_script "run_ddcolor_benchmark.sh"

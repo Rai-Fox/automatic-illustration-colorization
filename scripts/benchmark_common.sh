@@ -12,6 +12,8 @@ MAX_SAVED_IMAGES="${MAX_SAVED_IMAGES:-1000000}"
 BENCHMARK_MODE="${BENCHMARK_MODE:-full}"
 LPIPS_BATCH_SIZE="${LPIPS_BATCH_SIZE:-32}"
 KID_SUBSET_SIZE="${KID_SUBSET_SIZE:-1000}"
+METRICS_BATCH_SIZE="${METRICS_BATCH_SIZE:-32}"
+KID_BATCH_SIZE="${KID_BATCH_SIZE:-${METRICS_BATCH_SIZE}}"
 
 FULL_METRICS="${FULL_METRICS:-colorfulness,line_preservation_score,ink_preservation_score,lpips,kid}"
 LIGHT_METRICS="${LIGHT_METRICS:-colorfulness,line_preservation_score,ink_preservation_score}"
@@ -73,6 +75,8 @@ run_single_model_benchmark() {
   echo "Device: ${DEVICE}"
   echo "Benchmark mode: ${BENCHMARK_MODE}"
   echo "Batch size: ${batch_size}"
+  echo "Metrics batch size: ${METRICS_BATCH_SIZE}"
+  echo "KID batch size: ${KID_BATCH_SIZE}"
   echo "Reference mode: ${reference_mode}"
   echo "UV groups: ${effective_uv_groups}${EXTRA_UV_GROUPS:+ ${EXTRA_UV_GROUPS}}"
   echo
@@ -98,6 +102,8 @@ run_single_model_benchmark() {
     --run_id "${run_id}"
     "benchmark.metrics.lpips_batch_size=${LPIPS_BATCH_SIZE}"
     "benchmark.metrics.kid_subset_size=${KID_SUBSET_SIZE}"
+    "benchmark.metrics.batch_size=${METRICS_BATCH_SIZE}"
+    "benchmark.metrics.kid_batch_size=${KID_BATCH_SIZE}"
   )
 
   if [[ -n "${sample_limit}" && "${sample_limit}" != "all" ]]; then

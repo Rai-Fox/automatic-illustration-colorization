@@ -352,6 +352,12 @@ illustration_colorizer/conf/benchmark/default.yaml
 - `benchmark.reference.mode` - `none`, `fixed_by_title`,
   `previous_output_by_title`.
 - `benchmark.metrics.enabled` - список метрик.
+- `benchmark.metrics.batch_size` - размер батча для потокового расчета метрик
+  по saved/generated images.
+- `benchmark.metrics.lpips_batch_size` - размер батча LPIPS.
+- `benchmark.metrics.kid_subset_size` - размер KID-подвыборки; KID-state
+  накапливает не больше этого количества пар изображений.
+- `benchmark.metrics.kid_batch_size` - размер батча обновления KID-state.
 - `benchmark.runtime.device` - `cuda` или `cpu`.
 - `benchmark.runtime.batch_size` - batch size.
 - `benchmark.report.output_dir` - директория отчетов.
@@ -393,6 +399,7 @@ SAMPLE_LIMIT=all bash scripts/run_ddcolor_benchmark.sh
 RUN_NAME=experiment_01 bash scripts/run_all_models_benchmark.sh
 MAX_SAVED_IMAGES=1000000 bash scripts/run_all_models_benchmark.sh
 METRICS=colorfulness,line_preservation_score bash scripts/run_deoldify_benchmark.sh
+METRICS_BATCH_SIZE=16 KID_BATCH_SIZE=16 KID_SUBSET_SIZE=1000 bash scripts/run_ddcolor_benchmark.sh
 ```
 
 Режимы бенчмарка:
@@ -431,6 +438,25 @@ uv run --group benchmark --group model-ddcolor python cli.py benchmark --models 
 uv run --group benchmark --group model-ddcolor python cli.py benchmark --models ddcolor --mode metrics_only --sample_limit=32 --device cuda --run_id ddcolor_precomputed
 ```
 
+Расчет метрик по уже сохраненным `*_images_all` без перезапуска инференса:
+
+```bash
+RUN_NAME=images_all BENCHMARK_MODE=metrics_only SAMPLE_LIMIT=1000 KID_SUBSET_SIZE=1000 bash scripts/run_ddcolor_benchmark.sh --json_name report_1000.json --csv_name summary_1000.csv
+RUN_NAME=images_all BENCHMARK_MODE=metrics_only KID_SUBSET_SIZE=1000 bash scripts/run_ddcolor_benchmark.sh --json_name report_all.json --csv_name summary_all.csv
+```
+
+Важно: в `metrics_only` `RUN_NAME`/`RUN_ID` выбирает папку generated images,
+например `outputs/benchmark/generated/ddcolor/ddcolor_cuda_images_all/`.
+Чтобы не затирать отчеты для разных подвыборок одного generated-run, меняйте
+`--json_name` и `--csv_name`, а не `RUN_NAME`.
+
+Готовый последовательный запуск metrics-only для уже сохраненных основных
+моделей:
+
+```bash
+bash scripts/run_metrics_only_benchmarks_all_models.sh
+```
+
 Низкопамятный запуск Cobra:
 
 ```bash
@@ -449,6 +475,31 @@ uv run --group benchmark python cli.py aggregate_panels --models ddcolor,deoldif
 uv run --group benchmark python cli.py aggregate_panels --models ddcolor:ddcolor_small,ddcolor:ddcolor_large --max_images=8
 ```
 
+Сравнение посчитанных метрик и генерация таблицы/графиков:
+
+```bash
+uv run --group benchmark python cli.py compare_reports --report_name report_all.json
+uv run --group benchmark python cli.py compare_reports --report_name report_1000.json --models ddcolor,deoldify,colorcomic_auto,cgan_reference
+```
+
+`compare_reports` рекурсивно читает `outputs/benchmark/reports/**/<report_name>`,
+собирает `colorfulness`, `line_preservation_score`, `ink_preservation_score`,
+`lpips`, `kid.kid_mean`, `kid.kid_std`, выделяет лучшие значения и сохраняет:
+
+```text
+outputs/benchmark/comparison_reports/comparison.csv
+outputs/benchmark/comparison_reports/comparison.tex
+outputs/benchmark/comparison_reports/comparison.json
+outputs/benchmark/comparison_reports/metrics_barplots.png
+```
+
+Правила выбора лучшего значения:
+
+- `colorfulness`, `line_preservation_score`, `ink_preservation_score` - больше лучше.
+- `lpips`, `kid.kid_mean`, `kid.kid_std` - меньше лучше.
+- skipped/missing метрики отображаются как `--` и не участвуют в выборе best.
+- одинаковые лучшие значения после округления выделяются вместе.
+
 Основные выходные файлы:
 
 ```text
@@ -458,6 +509,7 @@ outputs/benchmark/runs/<run_id>/<model>/report.json
 outputs/benchmark/generated/<model>/<run_id>/<sample_id>.png
 outputs/benchmark/generated/<model>/<run_id>/manifest.json
 outputs/benchmark/comparisons/
+outputs/benchmark/comparison_reports/
 ```
 
 Hydra overrides можно передавать после CLI-аргументов:

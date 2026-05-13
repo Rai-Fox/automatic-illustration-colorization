@@ -4,6 +4,8 @@ import numpy as np
 from PIL import Image
 
 from illustration_colorizer.benchmark.datasets import BenchmarkSample
+from illustration_colorizer.benchmark.metrics.color import ColorfulnessMetric
+from illustration_colorizer.benchmark.metrics.perceptual import KidMetric
 from illustration_colorizer.benchmark.runner import (
     MetricReport,
     ModelReport,
@@ -143,6 +145,128 @@ def test_run_metrics_from_generated_images_does_not_require_model_loading(
     assert report.model_id == "ddcolor"
     assert report.counts["successful_samples"] == 1
     assert report.metrics["colorfulness"].status == "computed"
+
+
+def test_run_metrics_from_generated_images_batches_records(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    samples = [
+        BenchmarkSample(
+            sample_id=f"sample_{index}",
+            input_image=np.zeros((8, 10, 3), dtype=np.uint8),
+            target_image=np.ones((8, 10, 3), dtype=np.uint8) * 127,
+        )
+        for index in range(2)
+    ]
+    _save_generated_images(
+        output_dir=tmp_path / "generated",
+        model_id="ddcolor",
+        run_id="run_001",
+        generated_images=[
+            (sample, np.ones((8, 10, 3), dtype=np.uint8) * 255)
+            for sample in samples
+        ],
+        max_saved_images=2,
+    )
+
+    batch_sizes = []
+
+    def compute_batch_size(
+        self,
+        *,
+        x_images,
+        y_images,
+        g_images=None,
+    ) -> float:
+        batch_sizes.append(len(y_images))
+        return 1.0
+
+    monkeypatch.setattr(ColorfulnessMetric, "compute", compute_batch_size)
+
+    report = _run_metrics_from_generated_images(
+        benchmark_config={
+            "report": {"generated_dir_name": "generated"},
+            "metrics": {
+                "enabled": ["colorfulness"],
+                "batch_size": 1,
+                "kid_subset_size": 50,
+                "lpips_net": "alex",
+                "lpips_batch_size": 8,
+            },
+            "runtime": {"device": "cpu"},
+        },
+        model_config={"model_id": "ddcolor"},
+        samples=samples,
+        report_dir=tmp_path,
+        run_id="run_001",
+    )
+
+    assert batch_sizes == [1, 1]
+    assert report.counts["successful_samples"] == 2
+    assert report.metrics["colorfulness"].sample_count == 2
+
+
+def test_run_metrics_from_generated_images_limits_kid_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    samples = [
+        BenchmarkSample(
+            sample_id=f"sample_{index}",
+            input_image=np.zeros((8, 10, 3), dtype=np.uint8),
+            target_image=np.ones((8, 10, 3), dtype=np.uint8) * 127,
+        )
+        for index in range(5)
+    ]
+    _save_generated_images(
+        output_dir=tmp_path / "generated",
+        model_id="ddcolor",
+        run_id="run_001",
+        generated_images=[
+            (sample, np.ones((8, 10, 3), dtype=np.uint8) * 255)
+            for sample in samples
+        ],
+        max_saved_images=5,
+    )
+
+    kid_batch_sizes = []
+
+    def create_state(self, *, expected_sample_count):
+        return object()
+
+    def update_state(self, kid, *, y_images, g_images):
+        kid_batch_sizes.append(len(y_images))
+
+    def compute_state(self, kid):
+        return {"kid_mean": 0.0, "kid_std": 0.0}
+
+    monkeypatch.setattr(KidMetric, "create_state", create_state)
+    monkeypatch.setattr(KidMetric, "update_state", update_state)
+    monkeypatch.setattr(KidMetric, "compute_state", compute_state)
+
+    report = _run_metrics_from_generated_images(
+        benchmark_config={
+            "report": {"generated_dir_name": "generated"},
+            "metrics": {
+                "enabled": ["kid"],
+                "batch_size": 2,
+                "kid_subset_size": 3,
+                "kid_batch_size": 2,
+                "lpips_net": "alex",
+                "lpips_batch_size": 8,
+            },
+            "runtime": {"device": "cpu"},
+        },
+        model_config={"model_id": "ddcolor"},
+        samples=samples,
+        report_dir=tmp_path,
+        run_id="run_001",
+    )
+
+    assert kid_batch_sizes == [2, 1]
+    assert report.counts["successful_samples"] == 5
+    assert report.metrics["kid"].sample_count == 3
 
 
 def test_write_per_model_reports_uses_model_subdirectories(tmp_path) -> None:

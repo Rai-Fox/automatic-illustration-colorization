@@ -170,6 +170,34 @@ class ColorizerCLI:
             reference_config=config.benchmark.reference,
         )
 
+    def compare_reports(
+        self,
+        benchmark_output_dir: str = "outputs/benchmark",
+        report_name: str = "report_all.json",
+        models: str | None = None,
+        output_dir: str = "comparison_reports",
+        metrics: str | None = None,
+        precision: int = 4,
+        include_runs: bool = True,
+        make_plots: bool = True,
+    ) -> dict[str, object]:
+        from illustration_colorizer.benchmark.compare import (
+            compare_benchmark_reports,
+        )
+
+        project_root = get_project_root(Path(__file__), levels_up=0)
+        return compare_benchmark_reports(
+            project_root=project_root,
+            benchmark_output_dir=benchmark_output_dir,
+            report_name=report_name,
+            models=models,
+            output_dir=output_dir,
+            metrics=metrics,
+            precision=precision,
+            include_runs=include_runs,
+            make_plots=make_plots,
+        )
+
     def prepare_models(
         self,
         *config_overrides: str,
